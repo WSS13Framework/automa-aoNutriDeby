@@ -1,5 +1,6 @@
 # Imagem com Python + browsers Playwright (Chromium).
-FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
+# Versão alinhada com o pacote `playwright` em pyproject.toml (browsers em /ms-playwright/).
+FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
 
 WORKDIR /app
 
