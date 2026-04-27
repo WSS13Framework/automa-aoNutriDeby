@@ -1,0 +1,2 @@
+nome,url_perfil,idade,contato,objetivos,historico,prontuarios,mensagens
+Exemplo Paciente,https://exemplo.com/paciente/0,30 anos,email@exemplo.com,"Perder peso; Mais energia","Texto do histórico (substituir após extração).","Prontuário 1 | Prontuário 2","Últimas mensagens (texto único)."
