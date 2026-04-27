@@ -54,6 +54,35 @@ python -m nutrideby.workers.crm_extract --check-db
 
 Com PostgreSQL só no host, use `DATABASE_URL=postgresql://nutrideby:nutrideby_dev@localhost:5432/nutrideby` no `.env`.
 
+## Git: enviar código e atualizar no servidor
+
+No computador onde editas o projeto:
+
+```bash
+git status
+git add -A
+git commit -m "Descreva a alteração."
+git push origin main
+```
+
+No servidor (já tens o repositório em `/opt/automa-aoNutriDeby`):
+
+```bash
+cd /opt/automa-aoNutriDeby
+git pull origin main
+```
+
+Clone de raiz (substitui a pasta antiga; apaga alterações locais não commitadas):
+
+```bash
+cd /opt
+rm -rf automa-aoNutriDeby
+git clone https://github.com/WSS13Framework/automa-aoNutriDeby.git
+cd automa-aoNutriDeby
+```
+
+`data/pacientes.csv` com dados reais **não** é versionado (`.gitignore`, LGPD). Usa `data/pacientes_export_template.csv` como modelo e gera `data/pacientes.csv` no servidor (por exemplo a partir de `/opt/nutri-campaign/`).
+
 ## Estrutura
 
 | Caminho | Descrição |

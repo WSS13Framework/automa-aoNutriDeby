@@ -14,3 +14,6 @@ build/
 playwright-state.json
 storage_state.json
 *.log
+
+# CSV com dados reais de pacientes (não versionar — LGPD). Use o template em data/.
+data/pacientes.csv
