@@ -5,7 +5,7 @@ Pipeline para extração automatizada do CRM (Datebox, sem API pública), armaze
 ## Requisitos
 
 - Docker e Docker Compose
-- Python 3.11+ (desenvolvimento local sem Docker)
+- Python 3.10+ (desenvolvimento local sem Docker; a imagem Docker Playwright `jammy` usa 3.10)
 
 ## Início rápido (Docker)
 
