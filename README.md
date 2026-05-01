@@ -41,6 +41,16 @@ Pipeline para extração automatizada do CRM (Datebox, sem API pública), armaze
    docker compose --profile tools run --rm worker python -m nutrideby.workers.crm_extract --check-db
    ```
 
+6. Com `GENAI_AGENT_URL` e `GENAI_AGENT_ACCESS_KEY` no `.env`, testar o agente DigitalOcean GenAI (ver também [docs/execucao-plano-integracao.md](docs/execucao-plano-integracao.md)):
+
+   ```bash
+   docker compose --profile tools run --rm worker python -m nutrideby.workers.crm_extract --check-agent
+   ```
+
+## Integração DO GenAI, RAG e OpenClaw
+
+Objetivo de negócio: extração **Datebox** (sem API) → **Postgres** (`patients`, `documents`) → base de conhecimento / **RAG** na DigitalOcean → **OpenClaw** (GARRA) com **DeepSeek** como interface. Passos operacionais, `curl` e patches de código listados em **[docs/execucao-plano-integracao.md](docs/execucao-plano-integracao.md)**.
+
 ## Desenvolvimento local
 
 ```bash
@@ -50,6 +60,7 @@ pip install -e .
 playwright install chromium
 python -m nutrideby.workers.crm_extract --dry-run
 python -m nutrideby.workers.crm_extract --check-db
+python -m nutrideby.workers.crm_extract --check-agent
 ```
 
 Com PostgreSQL só no host, use `DATABASE_URL=postgresql://nutrideby:nutrideby_dev@localhost:5432/nutrideby` no `.env`.
@@ -89,7 +100,10 @@ cd automa-aoNutriDeby
 |--------|-----------|
 | `infra/sql/001_initial.sql` | Tabelas `patients`, `documents`, `chunks`, `extraction_runs`, `campaign_drafts` |
 | `src/nutrideby/config.py` | Configuração via `.env` |
-| `src/nutrideby/workers/crm_extract.py` | Stub Playwright (`--dry-run`, `--check-db`) |
+| `src/nutrideby/workers/crm_extract.py` | Stub Playwright (`--dry-run`, `--check-db`, `--check-agent`) |
+| `src/nutrideby/clients/genai_agent.py` | Cliente HTTP mínimo para agente DO GenAI (RAG) |
+| `src/nutrideby/persist/crm_persist.py` | Upsert `patients` / insert idempotente `documents` |
+| `docs/execucao-plano-integracao.md` | Checklist operacional DO GenAI / OpenClaw + `curl` |
 | `docker-compose.yml` | `postgres`, `redis`, `worker` (perfil `tools`) |
 | `Dockerfile` | Imagem base Playwright oficial + pacote instalado |
 

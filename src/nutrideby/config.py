@@ -21,5 +21,9 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_api_base: str = "https://api.deepseek.com"
 
+    # DigitalOcean GenAI — agente RAG; ver README e docs/execucao-plano-integracao.md
+    genai_agent_url: str | None = None
+    genai_agent_access_key: str | None = None
+
     playwright_headless: bool = True
     playwright_storage_state: str | None = None

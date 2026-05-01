@@ -7,6 +7,7 @@ persistência em `patients` / `documents` (ver infra/sql).
 Uso:
   python -m nutrideby.workers.crm_extract --dry-run
   python -m nutrideby.workers.crm_extract --check-db
+  python -m nutrideby.workers.crm_extract --check-agent
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
+from nutrideby.clients.genai_agent import check_agent_inference
 from nutrideby.config import Settings
 from nutrideby.db import check_connection
 
@@ -90,11 +92,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Testa conexão com PostgreSQL (DATABASE_URL)",
     )
+    parser.add_argument(
+        "--check-agent",
+        action="store_true",
+        help="Testa POST ao agente DO GenAI (GENAI_AGENT_URL + GENAI_AGENT_ACCESS_KEY)",
+    )
     args = parser.parse_args(argv)
     settings = Settings()
 
     if args.check_db:
         ok = check_connection(settings.database_url)
+        return 0 if ok else 1
+
+    if args.check_agent:
+        if not settings.genai_agent_url or not settings.genai_agent_access_key:
+            logger.error(
+                "Defina GENAI_AGENT_URL e GENAI_AGENT_ACCESS_KEY para --check-agent",
+            )
+            return 2
+        ok = check_agent_inference(
+            settings.genai_agent_url,
+            settings.genai_agent_access_key,
+        )
         return 0 if ok else 1
 
     if args.dry_run:
