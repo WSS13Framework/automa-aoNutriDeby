@@ -11,7 +11,8 @@ ENV PYTHONUNBUFFERED=1 \
 COPY pyproject.toml README.md ./
 COPY src ./src
 
-RUN pip install --upgrade pip && pip install .
+# Instalação em modo editável: o volume ./src:/app/src substitui o código sem rebuild.
+RUN pip install --upgrade pip && pip install -e .
 
 # Browsers já inclusos na imagem base; garantir deps do Chromium.
 RUN playwright install-deps chromium || true

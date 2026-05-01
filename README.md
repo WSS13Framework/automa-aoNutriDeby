@@ -62,9 +62,12 @@ python -m nutrideby.workers.crm_extract --import-csv data/o_teu_export.csv
 No Docker (monta `./data` em `/app/data`):
 
 ```bash
+docker compose --profile tools build worker
 docker compose --profile tools run --rm worker \
   python -m nutrideby.workers.crm_extract --import-json /app/data/exemplo_import.json
 ```
+
+Após `git pull`, volta a fazer **`build worker`** (a imagem usa `pip install -e .` e o código vem de `./src` montado; sem pull antigo, flags como `--import-json` não existem).
 
 ## Login Datebox (Playwright, opcional)
 
