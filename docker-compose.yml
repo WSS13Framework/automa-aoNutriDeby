@@ -33,6 +33,8 @@ services:
     environment:
       DATABASE_URL: postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby
       REDIS_URL: redis://redis:6379/0
+      GENAI_AGENT_URL: ${GENAI_AGENT_URL:-}
+      GENAI_AGENT_ACCESS_KEY: ${GENAI_AGENT_ACCESS_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,6 +42,7 @@ services:
         condition: service_healthy
     volumes:
       - ./src:/app/src:ro
+      - ./data:/app/data:ro
     profiles:
       - tools
 

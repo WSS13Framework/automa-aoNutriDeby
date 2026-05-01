@@ -2,6 +2,8 @@
 
 O código referido abaixo está **aplicado no repositório** (`clients/genai_agent.py`, `persist/crm_persist.py`, `config.py`, `crm_extract.py`, `.env.example`). Este doc mantém o **checklist operacional** e o `curl` de diagnóstico.
 
+**Importação Postgres:** `python -m nutrideby.workers.crm_extract --import-json data/exemplo_import.json` ou `--import-csv` (ver README).
+
 ## 1. Operação (sem código)
 
 1. **OpenClaw:** revogar o token exposto no chat; criar novo; guardar só em secrets do painel.

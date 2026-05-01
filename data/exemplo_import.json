@@ -1,0 +1,16 @@
+{
+  "patients": [
+    {
+      "external_id": "demo-exemplo-001",
+      "display_name": "Paciente Exemplo (fictício)",
+      "metadata": { "origem": "exemplo_import.json" },
+      "documents": [
+        {
+          "doc_type": "datebox_prontuarios",
+          "content_text": "Texto de prontuário de exemplo para testar a base. Substituir por dados reais após extração.",
+          "source_ref": "manual"
+        }
+      ]
+    }
+  ]
+}

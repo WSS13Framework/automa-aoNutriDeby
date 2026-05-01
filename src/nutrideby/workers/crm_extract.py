@@ -8,6 +8,8 @@ Uso:
   python -m nutrideby.workers.crm_extract --dry-run
   python -m nutrideby.workers.crm_extract --check-db
   python -m nutrideby.workers.crm_extract --check-agent
+  python -m nutrideby.workers.crm_extract --import-csv data/export.csv
+  python -m nutrideby.workers.crm_extract --import-json data/exemplo_import.json
 """
 
 from __future__ import annotations
@@ -16,12 +18,14 @@ import argparse
 import logging
 import sys
 import time
+from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 from nutrideby.clients.genai_agent import check_agent_inference
 from nutrideby.config import Settings
 from nutrideby.db import check_connection
+from nutrideby.workers.data_import import import_patients_csv, import_patients_json
 
 logger = logging.getLogger(__name__)
 
@@ -51,15 +55,37 @@ def run_browser_smoke(*, headless: bool, storage_state: str | None) -> None:
             browser.close()
 
 
+def try_crm_login(page: Page, settings: Settings) -> None:
+    """Preenche formulário de login se credenciais e seletores CSS estiverem definidos."""
+    u, pw = settings.crm_username, settings.crm_password
+    su, sp, btn = (
+        settings.crm_login_user_selector,
+        settings.crm_login_password_selector,
+        settings.crm_login_submit_selector,
+    )
+    if not all([u, pw, su, sp, btn]):
+        logger.info(
+            "Login CRM omitido: defina CRM_USERNAME, CRM_PASSWORD e os três "
+            "CRM_LOGIN_*_SELECTOR no .env para login automático.",
+        )
+        return
+    _jitter_ms()
+    page.fill(su, u)
+    page.fill(sp, pw)
+    page.click(btn)
+    page.wait_for_load_state("domcontentloaded", timeout=60_000)
+    logger.info("Login CRM: credenciais enviadas (revisa seletores se falhar).")
+
+
 def run_crm_navigation_stub(
     *,
     base_url: str,
     headless: bool,
     storage_state: str | None,
+    settings: Settings,
 ) -> None:
     """
-    Navega até a URL base do CRM sem preencher credenciais reais.
-    Substitua por fluxo de login e seletores reais quando o Datebox estiver mapeado.
+    Navega até a URL base do CRM; opcionalmente executa login com seletores do .env.
     """
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
@@ -71,7 +97,8 @@ def run_crm_navigation_stub(
             page = context.new_page()
             _jitter_ms()
             page.goto(base_url, wait_until="domcontentloaded", timeout=60_000)
-            logger.info("Carregada URL base do CRM (stub): %s", base_url)
+            logger.info("Carregada URL base do CRM: %s", base_url)
+            try_crm_login(page, settings)
         finally:
             browser.close()
 
@@ -97,8 +124,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Testa POST ao agente DO GenAI (GENAI_AGENT_URL + GENAI_AGENT_ACCESS_KEY)",
     )
+    parser.add_argument(
+        "--import-csv",
+        metavar="FILE",
+        help="Importa export CSV (template em data/pacientes_export_template.csv) para Postgres",
+    )
+    parser.add_argument(
+        "--import-json",
+        metavar="FILE",
+        help="Importa pacientes/documentos a partir de JSON (ver data/exemplo_import.json)",
+    )
     args = parser.parse_args(argv)
     settings = Settings()
+
+    if args.import_csv and args.import_json:
+        logger.error("Use apenas um de --import-csv ou --import-json")
+        return 2
 
     if args.check_db:
         ok = check_connection(settings.database_url)
@@ -116,6 +157,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if ok else 1
 
+    if args.import_csv:
+        return import_patients_csv(settings, Path(args.import_csv))
+
+    if args.import_json:
+        return import_patients_json(settings, Path(args.import_json))
+
     if args.dry_run:
         run_browser_smoke(
             headless=settings.playwright_headless,
@@ -131,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         base_url=settings.crm_base_url,
         headless=settings.playwright_headless,
         storage_state=settings.playwright_storage_state,
+        settings=settings,
     )
     return 0
 

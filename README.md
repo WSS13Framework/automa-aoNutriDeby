@@ -47,6 +47,29 @@ Pipeline para extração automatizada do CRM (Datebox, sem API pública), armaze
    docker compose --profile tools run --rm worker python -m nutrideby.workers.crm_extract --check-agent
    ```
 
+## Importar dados para Postgres (CSV ou JSON)
+
+Com PostgreSQL a correr (`docker compose up -d postgres`) e o schema aplicado:
+
+```bash
+# JSON de exemplo (dados fictícios)
+python -m nutrideby.workers.crm_extract --import-json data/exemplo_import.json
+
+# CSV no formato do template data/pacientes_export_template.csv
+python -m nutrideby.workers.crm_extract --import-csv data/o_teu_export.csv
+```
+
+No Docker (monta `./data` em `/app/data`):
+
+```bash
+docker compose --profile tools run --rm worker \
+  python -m nutrideby.workers.crm_extract --import-json /app/data/exemplo_import.json
+```
+
+## Login Datebox (Playwright, opcional)
+
+Se definires no `.env` as variáveis `CRM_USERNAME`, `CRM_PASSWORD` e os três seletores CSS `CRM_LOGIN_USER_SELECTOR`, `CRM_LOGIN_PASSWORD_SELECTOR`, `CRM_LOGIN_SUBMIT_SELECTOR`, o comando sem flags (`CRM_BASE_URL` definido) tenta preencher o login após abrir a URL base. Ajusta os seletores ao HTML real do Datebox.
+
 ## Integração DO GenAI, RAG e OpenClaw
 
 Objetivo de negócio: extração **Datebox** (sem API) → **Postgres** (`patients`, `documents`) → base de conhecimento / **RAG** na DigitalOcean → **OpenClaw** (GARRA) com **DeepSeek** como interface. Passos operacionais, `curl` e patches de código listados em **[docs/execucao-plano-integracao.md](docs/execucao-plano-integracao.md)**.
@@ -103,6 +126,8 @@ cd automa-aoNutriDeby
 | `src/nutrideby/workers/crm_extract.py` | Stub Playwright (`--dry-run`, `--check-db`, `--check-agent`) |
 | `src/nutrideby/clients/genai_agent.py` | Cliente HTTP mínimo para agente DO GenAI (RAG) |
 | `src/nutrideby/persist/crm_persist.py` | Upsert `patients` / insert idempotente `documents` |
+| `src/nutrideby/workers/data_import.py` | `--import-csv` / `--import-json` → Postgres |
+| `data/exemplo_import.json` | Exemplo mínimo de importação JSON |
 | `docs/execucao-plano-integracao.md` | Checklist operacional DO GenAI / OpenClaw + `curl` |
 | `docker-compose.yml` | `postgres`, `redis`, `worker` (perfil `tools`) |
 | `Dockerfile` | Imagem base Playwright oficial + pacote instalado |

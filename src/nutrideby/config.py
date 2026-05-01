@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     crm_base_url: str | None = None
     crm_username: str | None = None
     crm_password: str | None = None
+    # Playwright: login no Datebox (opcional; preencher quando tiveres seletores CSS)
+    crm_login_user_selector: str | None = None
+    crm_login_password_selector: str | None = None
+    crm_login_submit_selector: str | None = None
 
     deepseek_api_key: str | None = None
     deepseek_api_base: str = "https://api.deepseek.com"
