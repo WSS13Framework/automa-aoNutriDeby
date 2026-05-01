@@ -9,9 +9,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# A DO costuma expor /api/v1/...; /v1/... devolve 404 em muitos agentes.
 _COMPLETION_PATHS = (
-    "/v1/chat/completions?agent=true",
     "/api/v1/chat/completions?agent=true",
+    "/v1/chat/completions?agent=true",
 )
 
 
@@ -38,8 +39,12 @@ def check_agent_inference(
 ) -> bool:
     """
     Envia um pedido mínimo estilo OpenAI ao agente DigitalOcean GenAI (RAG).
-    Tenta /v1 e /api/v1; em 404 tenta o path seguinte; outros erros HTTP param de imediato.
+    Tenta /api/v1 e /v1; em 404 tenta o path seguinte; outros erros HTTP param de imediato.
     """
+    access_key = access_key.strip()
+    if not access_key:
+        logger.error("GENAI_AGENT_ACCESS_KEY está vazio")
+        return False
     base = agent_base_url.rstrip("/")
     body: dict[str, Any] = {
         "model": "ignored",
@@ -57,7 +62,15 @@ def check_agent_inference(
                 return True
             last_err = f"HTTP {status}: {text[:300]}"
             if status != 404:
-                logger.error("Agente GenAI: %s", last_err)
+                if status in (401, 403):
+                    logger.error(
+                        "Agente GenAI: %s — verifica GENAI_AGENT_ACCESS_KEY no .env: "
+                        "tem de ser a chave de *endpoint do agente* no painel DO (GenAI Agent), "
+                        "não o Personal Access Token da conta nem o token do OpenClaw.",
+                        last_err,
+                    )
+                else:
+                    logger.error("Agente GenAI: %s", last_err)
                 return False
         except OSError:
             logger.exception("Falha de rede ao contactar %s", url)

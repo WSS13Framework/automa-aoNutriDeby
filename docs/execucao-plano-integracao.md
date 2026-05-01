@@ -26,10 +26,10 @@ curl -sS -X POST \
   -H "Authorization: Bearer $GENAI_AGENT_ACCESS_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"ignored","messages":[{"role":"user","content":"Olá"}],"max_tokens":80}' \
-  "$GENAI_AGENT_URL/v1/chat/completions?agent=true"
+  "$GENAI_AGENT_URL/api/v1/chat/completions?agent=true"
 ```
 
-Se devolver `404`, tenta o path `/api/v1/chat/completions?agent=true` (ambos constam na doc DigitalOcean Agent Inference).
+Se devolver `404`, tenta também `$GENAI_AGENT_URL/v1/chat/completions?agent=true`. O código do worker tenta `/api/v1/` primeiro.
 
 ## 4. `src/nutrideby/config.py`
 
