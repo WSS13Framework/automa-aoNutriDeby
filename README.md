@@ -67,7 +67,7 @@ docker compose --profile tools run --rm worker \
   python -m nutrideby.workers.crm_extract --import-json /app/data/exemplo_import.json
 ```
 
-Após `git pull`, volta a fazer **`build worker`** (a imagem usa `pip install -e .` e o código vem de `./src` montado; sem pull antigo, flags como `--import-json` não existem).
+Após `git pull`, volta a fazer **`build worker`**. A imagem **não** instala o pacote `nutrideby` em `site-packages`: só dependências; o código vem sempre de **`./src` → `/app/src`** (`PYTHONPATH`). Se `--import-json` não for reconhecido, o host ainda tem `src/` antigo — confirma `git log -1 --oneline` e `grep import-json src/nutrideby/workers/crm_extract.py`.
 
 ## Login Datebox (Playwright, opcional)
 

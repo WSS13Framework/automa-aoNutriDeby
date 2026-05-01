@@ -8,11 +8,17 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app/src
 
+# Dependências do projeto (sincronizar com pyproject.toml — NÃO instalar o pacote nutrideby).
+# O código corre só de /app/src (volume), evitando cópia antiga em site-packages.
 COPY pyproject.toml README.md ./
-COPY src ./src
+RUN pip install --upgrade pip && \
+    pip install \
+    "playwright==1.58.0" \
+    "psycopg[binary]>=3.2.0" \
+    "pydantic-settings>=2.6.0" \
+    "selenium>=4.15.0"
 
-# Instalação em modo editável: o volume ./src:/app/src substitui o código sem rebuild.
-RUN pip install --upgrade pip && pip install -e .
+COPY src ./src
 
 # Browsers já inclusos na imagem base; garantir deps do Chromium.
 RUN playwright install-deps chromium || true
