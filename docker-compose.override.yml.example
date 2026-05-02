@@ -1,0 +1,6 @@
+# Copiar para docker-compose.override.yml (ficheiro ignorado pelo Git).
+# Ex.: cp docker-compose.override.yml.example docker-compose.override.yml
+services:
+  worker:
+    env_file:
+      - .env

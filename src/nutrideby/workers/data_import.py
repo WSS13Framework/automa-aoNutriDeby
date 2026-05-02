@@ -8,6 +8,7 @@ Formatos suportados:
 
 from __future__ import annotations
 
+import argparse
 import csv
 import hashlib
 import json
@@ -172,3 +173,25 @@ def import_patients_json(settings: Settings, path: Path) -> int:
         docs_skipped,
     )
     return 0
+
+
+def _cli() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    p = argparse.ArgumentParser(description="Importação CSV/JSON → Postgres")
+    p.add_argument("--csv", type=Path, metavar="FICHEIRO")
+    p.add_argument("--json", type=Path, metavar="FICHEIRO")
+    args = p.parse_args()
+    settings = Settings()
+    if args.csv:
+        return import_patients_csv(settings, args.csv)
+    if args.json:
+        return import_patients_json(settings, args.json)
+    p.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

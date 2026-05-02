@@ -32,3 +32,7 @@ class Settings(BaseSettings):
 
     playwright_headless: bool = True
     playwright_storage_state: str | None = None
+
+    # Dietbox API v2 (Bearer do browser / B2C)
+    dietbox_api_base: str = "https://api.dietbox.me"
+    dietbox_bearer_token: str | None = None

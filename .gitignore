@@ -1,4 +1,12 @@
+# --- Ambiente e segredos (nunca commit) ---
 .env
+.env.*
+!.env.example
+
+# Compose local (paths, overrides) — criar no servidor; não versionar
+docker-compose.override.yml
+
+# --- Python ---
 .venv/
 venv/
 __pycache__/
@@ -9,11 +17,33 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+
+# --- Dados locais / LGPD ---
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.save
+*.save
+# CSV com dados reais (manter só templates versionados)
+data/pacientes.csv
+
+# --- OpenClaw / estado de IDE agent (local) ---
+.openclaw/
+
+# --- Índices e artefactos pesados ---
 *.faiss
 *.pkl
+
+# --- Playwright ---
 playwright-state.json
 storage_state.json
-*.log
 
-# CSV com dados reais de pacientes (não versionar — LGPD). Use o template em data/.
-data/pacientes.csv
+# --- Logs e OS ---
+*.log
+.DS_Store
+Thumbs.db
+
+# --- IDEs (opcional; descomenta se a equipa não quiser partilhar) ---
+# .idea/
+# .vscode/
