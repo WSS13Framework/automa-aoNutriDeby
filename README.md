@@ -36,8 +36,11 @@ No `.env`: `DIETBOX_BEARER_TOKEN` (JWT depois de `Bearer `) e opcionalmente `DIE
 # Conectividade + prontuário (204 sem corpo é OK)
 python -m nutrideby.workers.dietbox_sync --probe ID_PACIENTE
 
-# Um paciente (GET /v2/paciente/{id})
+# Prontuário de um paciente → documents (+ paciente mínimo)
 python -m nutrideby.workers.dietbox_sync --sync-one ID_PACIENTE
+
+# Só ficha do paciente (GET /v2/paciente/{id} → patients, sem prontuário)
+python -m nutrideby.workers.dietbox_sync --sync-patient ID_PACIENTE
 
 # Lista de pacientes → Postgres (source_system=dietbox)
 python -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
