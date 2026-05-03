@@ -115,6 +115,7 @@ curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" http://127.0.0.1:8080/v1/dietbox/sub
 - **`docs/operacao-git-docker-servidor.md`** — Git *untracked*, `git pull`, volume Docker, erro `--sync-list`, `psql` (leitura obrigatória para deploy)
 - **`docs/higiene-git-e-repositorio.md`** — o que **não** commitar; checklist antes do `push`; limpar ficheiros já enviados por engano
 - **`docs/checklist-mvp-e-endpoints.md`** — mapa da lista Network vs código + **checklist de testes** para a demo
+- **`docs/regras-negocio-jornada-telemetria.md`** — regras de negócio: vendas (Cloudfy) vs. telemetria (VPS), Kiwify, jornada do paciente e backlog de alto nível
 - `docs/execucao-plano-integracao.md` — plano GenAI / persistência
 - `docs/estrategia-dietbox-e-api-propria.md` — estratégia Dietbox + API própria
 
