@@ -19,17 +19,20 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 
 | Item | Estado | Onde / notas |
 |------|--------|----------------|
-| Lista pacientes (C) → Postgres `patients` | **Feito** (parcial) | `dietbox_sync --sync-list`; parser JSON flexível — se a API usar chaves diferentes, ajustar `dietbox_api.py`. |
-| Probe prontuário (D) | **Feito** (mínimo) | `--probe`; só loga HTTP e tamanho; **não** grava `documents`. |
-| Prontuário 200 com corpo → `documents` | **Não feito** | Falta ler JSON/texto e `insert_document_if_new`. |
-| Prontuário 204 → marcador / política | **Não feito** | Opcional: texto curto + `doc_type` para RAG saber “vazio na API”. |
-| Subscription (B) | **Não feito** | Pode guardar em `patients.metadata` global ou tabela à parte. |
-| Site legacy (A) | **Não feito** (e não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
+| Lista pacientes (C) → Postgres `patients` | **Feito** | `dietbox_sync --sync-list`; envelope `Data`; `--include-inactive` / `--inactive-only`; piloto com centenas de upserts. |
+| Probe prontuário (D) | **Feito** (mínimo) | `--probe`; loga HTTP; **não** grava `documents`. |
+| Prontuário 200 com corpo → `documents` | **Feito** | `--sync-one`: JSON em `documents` (`doc_type=dietbox_prontuario`, `insert_document_if_new`). |
+| Prontuário 204 → marcador / política | **Feito** | `--sync-one`: texto `[Prontuário: API 204 sem corpo]` + mesmo `doc_type` (idempotente por hash). |
+| Detalhe paciente → `patients` | **Feito** | `--sync-patient` (GET `/v2/paciente/{id}`). |
+| Subscription (B) | **Parcial** | `--subscription` (probe HTTP + log); **persistir** JSON na base (metadata global / tabela): ainda não. |
+| Site MVC (fórmulas / feed) | **Parcial** | `SituacaoIMC` (`--formula-*`, `--sync-formula-imc-all`), `--feed-list`; IIS; mesmo Bearer; frágil vs API v2. |
+| `/v2/meta` paciente | **Parcial** | `--meta` (probe); ingestão em massa para `documents`: não. |
+| Site legacy (A) | **Não feito** (não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
 | `extraction_runs` (cursor, retomada) | **Não feito** | Tabela existe no SQL; worker não regista ainda. |
-| GenAI / `--check-agent` | **Não feito** | `config` tem campos; falta `genai_agent.py` e `crm_extract` (estavam no plano doc). |
+| GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
 | Chunks / embeddings / FAISS | **Não feito** | Fora do sync actual. |
-| API própria da nutricionista | **Não feito** | Produto à parte. |
-| Jobs periódicos (cron/Celery) | **Não feito** | Hoje: correr comandos à mão ou `cron` no servidor. |
+| API própria da nutricionista | **Não feito** | Produto à parte (Sprint 2 no plano). |
+| Jobs periódicos (cron/Celery) | **Não feito** | Hoje: correr comandos à mão ou `cron` no servidor; monitor JWT: planeado. |
 
 ---
 
@@ -125,10 +128,10 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 
 ## 4. Próximas implementações (ordem sugerida pós-MVP)
 
-1. Persistir prontuário quando **200** com corpo; política para **204**.
-2. Cliente `GET /v2/nutritionist/subscription` e guardar metadados úteis.
+1. Prontuário **em massa** (job: iterar `patients` → `--sync-one` ou batch) + rate limit / retomada.
+2. Persistir resposta de `GET /v2/nutritionist/subscription` (hoje só `--subscription` probe).
 3. `extraction_runs` + cursor `skip` para retomada idempotente.
-4. `genai_agent.py` + flag `--check-agent` no worker de extract (plano em `execucao-plano-integracao.md`).
+4. Smoke agendado (cron) + alerta se JWT expirar (**401**); ver plano de monitorização.
 5. Playwright só para o que a API **não** cobrir (prontuário na UI).
 
 ---
@@ -139,4 +142,4 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 - Plano técnico GenAI / persistência: [execucao-plano-integracao.md](./execucao-plano-integracao.md)
 - Comandos rápidos: [README.md](../README.md)
 
-**Última actualização:** 2026-05-02
+**Última actualização:** 2026-05-03
