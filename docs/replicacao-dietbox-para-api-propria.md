@@ -97,6 +97,7 @@ Até isso existir, o “tudo” = **tudo o que a tabela da secção 6** cobre + 
 
 ## 8. Relação com outros docs
 
+- **O que significa cada `doc_type` e o que está em `content_text`:** `docs/tipos-documentos-doc-type.md`
 - Checklist técnico: `docs/checklist-mvp-e-endpoints.md`
 - Plano negócio / sprints: `docs/PLANO-NEGOCIO-E-SPRINTS.md`
 - Estratégia API própria: `docs/estrategia-dietbox-e-api-propria.md`

@@ -184,6 +184,7 @@ python3 -m nutrideby.workers.rag_demo --patient-id SUBSTITUIR_UUID --query "test
 
 ## 5. Referências
 
+- Tipos `documents.doc_type` + SQL de inspecção: [tipos-documentos-doc-type.md](./tipos-documentos-doc-type.md)
 - Estratégia produto: [estrategia-dietbox-e-api-propria.md](./estrategia-dietbox-e-api-propria.md)
 - Plano técnico GenAI / persistência: [execucao-plano-integracao.md](./execucao-plano-integracao.md)
 - Comandos rápidos: [README.md](../README.md)
