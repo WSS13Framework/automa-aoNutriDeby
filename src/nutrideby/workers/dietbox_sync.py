@@ -3,7 +3,7 @@ Conector Dietbox (API v2) — Sprint 1 / MVP.
 
   python3 -m nutrideby.workers.dietbox_sync --probe PACIENTE_ID   # no Ubuntu host; no Docker: … worker python -m …
   python3 -m nutrideby.workers.dietbox_sync --sync-one PACIENTE_ID   # prontuário → documents
-  python3 -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
+  python3 -m nutrideby.workers.dietbox_sync --sync-list --take 100 --max-pages 0
   python3 -m nutrideby.workers.dietbox_sync --meta PACIENTE_ID --meta-take 50
   python3 -m nutrideby.workers.dietbox_sync --sync-meta-patient PACIENTE_ID [--meta-max-pages 100]
   python3 -m nutrideby.workers.dietbox_sync --sync-meta-all [--meta-all-limit 20] [--meta-all-sleep-ms 350]
@@ -12,7 +12,7 @@ Conector Dietbox (API v2) — Sprint 1 / MVP.
   python3 -m nutrideby.workers.dietbox_sync --feed-list
   python3 -m nutrideby.workers.dietbox_sync --subscription
   python3 -m nutrideby.workers.dietbox_sync --sync-subscription
-  python3 -m nutrideby.workers.dietbox_sync --sync-prontuario-all [--prontuario-limit N] [--prontuario-sleep-ms 250]
+  python3 -m nutrideby.workers.dietbox_sync --sync-prontuario-all [--prontuario-limit N] [--prontuario-sleep-ms 250] [--prontuario-workers 10]
   python3 -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID
   python3 -m nutrideby.workers.dietbox_sync --smoke   # cron: JWT; exit 3 em HTTP 401
 
@@ -71,6 +71,13 @@ SOURCE = "dietbox"
 def _client(settings: Settings) -> DietboxClient:
     base = settings.dietbox_api_base or "https://api.dietbox.me"
     return DietboxClient(base, settings.dietbox_bearer_token or "")
+
+
+def _prontuario_http_one(settings: Settings, ext_id: str) -> tuple[str, int, bytes]:
+    """GET prontuário num thread (cliente HTTP próprio por pedido)."""
+    c2 = _client(settings)
+    st, body = c2.get_prontuario(ext_id)
+    return ext_id, st, body
 
 
 def probe_prontuario(settings: Settings, patient_id: str) -> int:
@@ -643,6 +650,7 @@ def sync_prontuario_all(
     limit: int | None,
     sleep_ms: int,
     resume_run_id: uuid.UUID | None,
+    workers: int = 1,
 ) -> int:
     """Prontuário em lote para ``patients`` com ``source_system=dietbox``; regista ``extraction_runs``."""
     if not settings.dietbox_bearer_token:
@@ -652,6 +660,7 @@ def sync_prontuario_all(
     sleep_s = max(0, sleep_ms) / 1000.0
     http_other = 0
     new_docs = 0
+    wn = max(1, min(workers, 100))
 
     with psycopg.connect(settings.database_url) as conn:
         if resume_run_id is not None:
@@ -713,52 +722,68 @@ def sync_prontuario_all(
             external_ids = [str(r[0]) for r in cur.fetchall()]
 
         logger.info(
-            "sync-prontuario-all: run_id=%s retomada=%s pacientes_na_fila=%s",
+            "sync-prontuario-all: run_id=%s retomada=%s pacientes_na_fila=%s workers=%s",
             run_id,
             resume_run_id is not None,
             len(external_ids),
+            wn,
         )
 
-        for ext_id in external_ids:
-            st, body = c.get_prontuario(ext_id)
-            if st == 401:
-                finish_run(
+        for i in range(0, len(external_ids), wn):
+            batch = external_ids[i : i + wn]
+            if wn == 1:
+                triples = [(batch[0], *c.get_prontuario(batch[0]))]
+            else:
+                with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                    triples = list(pool.map(lambda eid: _prontuario_http_one(settings, eid), batch))
+
+            for ext_id, st, body in triples:
+                if st == 401:
+                    finish_run(
+                        conn,
+                        run_id,
+                        status="failed",
+                        error_message="HTTP 401 (JWT inválido ou expirado)",
+                        stats={
+                            "processed": processed,
+                            "new_documents": new_docs,
+                            "http_other": http_other,
+                        },
+                    )
+                    logger.error("sync-prontuario-all: HTTP 401 — JWT; run marcada failed")
+                    return 1
+                if st not in (200, 204):
+                    logger.warning(
+                        "paciente=%s prontuário HTTP=%s (ignorar e continuar)", ext_id, st
+                    )
+                    http_other += 1
+                else:
+                    new_id = apply_prontuario_response(
+                        settings,
+                        conn,
+                        ext_id,
+                        st,
+                        body,
+                        preserve_display_name=True,
+                    )
+                    if new_id is not None:
+                        new_docs += 1
+
+                processed += 1
+                last_ext = ext_id
+                update_run(
                     conn,
                     run_id,
-                    status="failed",
-                    error_message="HTTP 401 (JWT inválido ou expirado)",
-                    stats={"processed": processed, "new_documents": new_docs, "http_other": http_other},
+                    cursor_state={
+                        "job": JOB_DIETBOX_PRONTUARIO_BULK,
+                        "last_external_id": last_ext,
+                        "processed": processed,
+                    },
+                    stats={"new_documents": new_docs, "http_other": http_other},
                 )
-                logger.error("sync-prontuario-all: HTTP 401 — JWT; run marcada failed")
-                return 1
-            if st not in (200, 204):
-                logger.warning("paciente=%s prontuário HTTP=%s (ignorar e continuar)", ext_id, st)
-                http_other += 1
-            else:
-                new_id = apply_prontuario_response(
-                    settings,
-                    conn,
-                    ext_id,
-                    st,
-                    body,
-                    preserve_display_name=True,
-                )
-                if new_id is not None:
-                    new_docs += 1
-
-            processed += 1
-            last_ext = ext_id
-            update_run(
-                conn,
-                run_id,
-                cursor_state={
-                    "job": JOB_DIETBOX_PRONTUARIO_BULK,
-                    "last_external_id": last_ext,
-                    "processed": processed,
-                },
-                stats={"new_documents": new_docs, "http_other": http_other},
-            )
-            if sleep_s > 0:
+                if sleep_s > 0 and wn == 1:
+                    time.sleep(sleep_s)
+            if sleep_s > 0 and wn > 1:
                 time.sleep(sleep_s)
 
         finish_run(
@@ -840,7 +865,8 @@ def sync_patient_list(
     total_upsert = 0
     skip = 0
     pages = 0
-    while pages < max_pages:
+    # max_pages <= 0: percorre todas as páginas até a API devolver menos de ``take`` itens ou lista vazia.
+    while max_pages <= 0 or pages < max_pages:
         q: dict[str, str | int | bool] = {
             "skip": skip,
             "take": take,
@@ -1041,7 +1067,14 @@ def main(argv: list[str] | None = None) -> int:
         "--prontuario-sleep-ms",
         type=int,
         default=250,
-        help="Pausa entre pedidos HTTP (rate limit)",
+        help="Pausa: entre cada paciente (workers=1) ou entre cada lote (workers>1)",
+    )
+    p.add_argument(
+        "--prontuario-workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Pedidos GET prontuário em paralelo por lote (1=sequencial; 10 ou 100 acelera; risco de HTTP 429)",
     )
     p.add_argument(
         "--prontuario-resume-run-id",
@@ -1065,8 +1098,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Lista paginada GET /v2/paciente → patients",
     )
-    p.add_argument("--take", type=int, default=10)
-    p.add_argument("--max-pages", type=int, default=1)
+    p.add_argument("--take", type=int, default=10, help="Pacientes por página na lista v2/paciente")
+    p.add_argument(
+        "--max-pages",
+        type=int,
+        default=1,
+        help="Máximo de páginas (0 = todas até acabar a lista; usar com --take 50–100 para ingestão completa)",
+    )
     act = p.add_mutually_exclusive_group()
     act.add_argument(
         "--include-inactive",
@@ -1135,6 +1173,7 @@ def main(argv: list[str] | None = None) -> int:
             limit=lim,
             sleep_ms=max(0, args.prontuario_sleep_ms),
             resume_run_id=args.prontuario_resume_run_id,
+            workers=max(1, args.prontuario_workers),
         )
     if args.sync_one:
         return sync_one_prontuario(settings, args.sync_one)
