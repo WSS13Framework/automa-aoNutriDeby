@@ -81,7 +81,29 @@ python3 -m nutrideby.workers.chunk_documents --doc-type dietbox_prontuario --lim
 docker compose --profile tools run --rm worker python -m nutrideby.workers.chunk_documents --limit 20
 ```
 
-API: `GET /v1/patients/{uuid}/chunks` (mesmo `X-API-Key`). Embeddings / FAISS ficam para uma fase seguinte.
+API: `GET /v1/patients/{uuid}/chunks` (mesmo `X-API-Key`).
+
+### Embeddings + retrieval (Plano B)
+
+No `.env`: `OPENAI_API_KEY` (e opcional `OPENAI_API_BASE`, `OPENAI_EMBEDDING_MODEL=text-embedding-3-small`). Postgres com **`004_pgvector_chunks_embedding.sql`** e imagem **`pgvector/pgvector:pg16`**.
+
+```bash
+python3 -m nutrideby.workers.embed_chunks --limit 50 --dry-run
+python3 -m nutrideby.workers.embed_chunks --limit 50
+docker compose --profile tools run --rm worker python -m nutrideby.workers.embed_chunks --limit 30
+```
+
+Depois de `chunk_documents`, se usares `--force` nos chunks, volta a correr `embed_chunks` nesse documento.
+
+API semântica (corpo JSON):
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/v1/patients/UUID_PACIENTE/retrieve" \
+  -H "X-API-Key: $NUTRIDEBY_API_KEY" -H "Content-Type: application/json" \
+  -d '{"query":"hipertensão e sódio","k":5}'
+```
+
+Resposta: `hits[]` com `chunk_id`, `text`, `distance`, `score` (monotónico; menor `distance` = mais similar em pgvector).
 
 Se no servidor der `unrecognized arguments: --sync-list`, o código está desactualizado: actualiza o repo e corre `docker compose build worker`.
 

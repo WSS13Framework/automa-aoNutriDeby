@@ -44,3 +44,8 @@ class Settings(BaseSettings):
 
     # Kiwify → URL no painel: POST …/hooks/kiwify/<este_segredo> (sem partilhar em público)
     kiwify_webhook_path_secret: str | None = None
+
+    # Embeddings OpenAI-compatible (Plano B — ver docs/decisao-embeddings-vector-store.md)
+    openai_api_key: str | None = None
+    openai_api_base: str = "https://api.openai.com"
+    openai_embedding_model: str = "text-embedding-3-small"

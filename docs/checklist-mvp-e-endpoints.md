@@ -32,7 +32,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | Site legacy (A) | **Não feito** (não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
 | `extraction_runs` (cursor, retomada) | **Parcial** | **`--sync-prontuario-all`** cria run, actualiza `cursor_state` (`last_external_id`, `processed`); **`--prontuario-resume-run-id`** retoma. Outros jobs ainda não. |
 | GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python3 -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
-| Chunks / embeddings / FAISS | **Parcial** | **`chunk_documents`** → tabela ``chunks`` (texto segmentado; sem ``embedding_model`` / ``faiss_id``). API ``GET /v1/patients/{uuid}/chunks``. **Decisão + schema:** ``docs/decisao-embeddings-vector-store.md``, migração ``004_pgvector_chunks_embedding.sql`` (coluna ``embedding``). Worker que preenche embeddings: ainda não. |
+| Chunks / embeddings / RAG | **Parcial** | **`chunk_documents`** → ``chunks``; **`embed_chunks`** + coluna ``embedding`` (004); API ``GET …/chunks`` e ``POST …/retrieve`` (pgvector + OpenAI-compatible). FAISS em disco: não. |
 | API própria da nutricionista | **Não feito** | Produto à parte (Sprint 2 no plano). |
 | Jobs periódicos (cron/Celery) | **Parcial** | **`dietbox_sync --smoke`** (exit **3** em 401); webhook opcional `NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL`; doc `docs/monitorizacao-smoke-cron.md`. Celery: não. |
 
@@ -145,6 +145,21 @@ python3 -m nutrideby.workers.chunk_documents --limit 5
 
 - [ ] Exit code `0`; na base `SELECT count(*) FROM chunks;` > 0 após a segunda linha (se existirem `documents` com texto).
 
+### Teste H — Embeddings + `POST …/retrieve` (pgvector)
+
+Requer: migração `004`, Postgres com extensão `vector`, `OPENAI_API_KEY` no `.env`, API com profile `api`.
+
+```bash
+python3 -m nutrideby.workers.embed_chunks --limit 10 --dry-run
+python3 -m nutrideby.workers.embed_chunks --limit 10
+curl -sS -X POST "http://127.0.0.1:8080/v1/patients/SUBSTITUIR_UUID/retrieve" \
+  -H "X-API-Key: $NUTRIDEBY_API_KEY" -H "Content-Type: application/json" \
+  -d '{"query":"uma pergunta alinhada ao prontuário","k":3}'
+```
+
+- [ ] `embed_chunks` exit `0` e `SELECT count(*) FROM chunks WHERE embedding IS NOT NULL;` > 0.
+- [ ] `retrieve` devolve JSON com `hits` (pode ser lista vazia se a query não tiver vizinhos úteis).
+
 ---
 
 ## 4. Próximas implementações (ordem sugerida pós-MVP)
@@ -155,7 +170,7 @@ python3 -m nutrideby.workers.chunk_documents --limit 5
 4. ~~Smoke agendado (cron) + alerta 401~~ → ``--smoke`` + doc cron/webhook; plano OpenClaw/agente continua opcional.
 5. ~~`/v2/meta` → documents~~ → ``--sync-meta-patient`` / ``--sync-meta-all``.
 6. Playwright só para o que a API **não** cobrir (prontuário na UI).
-7. Embeddings + ``faiss_id`` / índice FAISS (ou vector DB) sobre ``chunks``.
+7. ~~Embeddings / pgvector sobre ``chunks``~~ → `embed_chunks` + `POST …/retrieve`; FAISS em disco / outros vector DBs só se fizer falta.
 
 ---
 

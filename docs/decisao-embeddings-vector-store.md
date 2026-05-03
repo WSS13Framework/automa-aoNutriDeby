@@ -37,9 +37,9 @@
 
 ## 4. Próximos passos técnicos (Plano B)
 
-1. Worker `embed_chunks` (ou extensão de `chunk_documents`) que preenche `embedding` + `embedding_model`.
-2. Índice **HNSW** (ou IVFFlat após carga mínima) sobre `chunks.embedding` com `WHERE embedding IS NOT NULL`.
-3. Endpoint ou tool: `patient_id` + texto → top-k chunks (similaridade coseno / produto interno conforme `pgvector`).
+1. ~~Worker `embed_chunks`~~ **Feito:** `python -m nutrideby.workers.embed_chunks` preenche `embedding` + `embedding_model`.
+2. Índice **HNSW** — já criado na migração `004` (reavaliar parâmetros após carga real).
+3. ~~Endpoint `patient_id` + texto → top-k~~ **Feito:** `POST /v1/patients/{uuid}/retrieve` (distância coseno `<=>`).
 4. Script de demo documentado no `checklist-mvp-e-endpoints.md` (pergunta → passagens citadas).
 
 ---
@@ -56,4 +56,6 @@
 
 - Schema inicial `chunks`: `infra/sql/001_initial.sql`
 - Migração pgvector: `infra/sql/004_pgvector_chunks_embedding.sql`
+- Cliente + worker: `src/nutrideby/clients/openai_embeddings.py`, `src/nutrideby/workers/embed_chunks.py`
+- API retrieval: `POST /v1/patients/{uuid}/retrieve` em `nutrideby.api.main`
 - Sequência de produto: `docs/sequencia-planos-abc-mvp.md`
