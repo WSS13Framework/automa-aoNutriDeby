@@ -28,7 +28,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | Detalhe paciente → `patients` | **Feito** | `--sync-patient` (GET `/v2/paciente/{id}`). |
 | Subscription (B) | **Feito** | `--subscription` (probe); **`--sync-subscription`** → `external_snapshots`; `GET /v1/dietbox/subscription` na API. Migração `infra/sql/002_external_snapshots.sql`. |
 | Site MVC (fórmulas / feed) | **Parcial** | `SituacaoIMC` (`--formula-*`, `--sync-formula-imc-all`), `--feed-list`; IIS; mesmo Bearer; frágil vs API v2. |
-| `/v2/meta` paciente | **Parcial** | `--meta` (probe); ingestão em massa para `documents`: não. |
+| `/v2/meta` paciente | **Feito** (mínimo) | `--meta` (probe); **`--sync-meta-patient`** / **`--sync-meta-all`** → `documents` (`doc_type=dietbox_meta_export`, JSON agregado por paciente; idempotente por hash). |
 | Site legacy (A) | **Não feito** (não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
 | `extraction_runs` (cursor, retomada) | **Parcial** | **`--sync-prontuario-all`** cria run, actualiza `cursor_state` (`last_external_id`, `processed`); **`--prontuario-resume-run-id`** retoma. Outros jobs ainda não. |
 | GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
@@ -126,6 +126,16 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 
 - [ ] Contagem na base cresce de forma coerente; sem erros HTTP `429` (rate limit).
 
+### Teste F — `/v2/meta` → `documents`
+
+```bash
+python -m nutrideby.workers.dietbox_sync --meta SUBSTITUIR_ID_PACIENTE --meta-take 20
+python -m nutrideby.workers.dietbox_sync --sync-meta-patient SUBSTITUIR_ID_PACIENTE --meta-max-pages 5
+```
+
+- [ ] `--meta` exit `0` e log com `TotalItems` / chaves coerentes.
+- [ ] Na base: `SELECT doc_type, count(*) FROM documents WHERE doc_type = 'dietbox_meta_export' GROUP BY 1;` — pelo menos um após `--sync-meta-patient` (se a API devolver itens).
+
 ---
 
 ## 4. Próximas implementações (ordem sugerida pós-MVP)
@@ -134,7 +144,8 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 2. ~~Persistir subscription~~ → `--sync-subscription` + `external_snapshots`.
 3. ~~`extraction_runs`~~ → usado no lote de prontuário; estender a outros jobs / cursor tipo `skip` em listas API.
 4. ~~Smoke agendado (cron) + alerta 401~~ → ``--smoke`` + doc cron/webhook; plano OpenClaw/agente continua opcional.
-5. Playwright só para o que a API **não** cobrir (prontuário na UI).
+5. ~~`/v2/meta` → documents~~ → ``--sync-meta-patient`` / ``--sync-meta-all``.
+6. Playwright só para o que a API **não** cobrir (prontuário na UI).
 
 ---
 

@@ -60,6 +60,10 @@ python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resu
 
 # Smoke para cron (JWT): exit 0=OK, 3=HTTP 401; opcional NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL
 python -m nutrideby.workers.dietbox_sync --smoke
+
+# Linha do tempo /v2/meta → documents (JSON agregado; --meta-max-pages limita paginação)
+python -m nutrideby.workers.dietbox_sync --sync-meta-patient ID_PACIENTE --meta-take 50 --meta-max-pages 30
+python -m nutrideby.workers.dietbox_sync --sync-meta-all --meta-all-limit 10 --meta-all-sleep-ms 400
 ```
 
 Cron e webhook: **`docs/monitorizacao-smoke-cron.md`**; exemplo de script: **`scripts/smoke-dietbox.example.sh`**.

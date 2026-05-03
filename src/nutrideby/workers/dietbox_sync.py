@@ -5,6 +5,8 @@ Conector Dietbox (API v2) — Sprint 1 / MVP.
   python -m nutrideby.workers.dietbox_sync --sync-one PACIENTE_ID   # prontuário → documents
   python -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
   python -m nutrideby.workers.dietbox_sync --meta PACIENTE_ID --meta-take 50
+  python -m nutrideby.workers.dietbox_sync --sync-meta-patient PACIENTE_ID [--meta-max-pages 100]
+  python -m nutrideby.workers.dietbox_sync --sync-meta-all [--meta-all-limit 20] [--meta-all-sleep-ms 350]
   python -m nutrideby.workers.dietbox_sync --formula-imc 28.5 --formula-idade 42
   python -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 4
   python -m nutrideby.workers.dietbox_sync --feed-list
@@ -220,6 +222,136 @@ def probe_feed_list(settings: Settings) -> int:
         logger.info("Chaves topo: %s", list(data.keys())[:40])
     logger.info("Corpo (truncado): %s", str(data)[:1200])
     return 0
+
+
+def sync_meta_for_patient(
+    settings: Settings,
+    patient_id: str,
+    *,
+    take: int = 50,
+    max_pages: int = 100,
+) -> int:
+    """
+    Pagina ``GET /v2/meta`` e grava um documento JSON agregado (``doc_type=dietbox_meta_export``).
+
+    Re-correr com a mesma linha do tempo idempotente (mesmo ``content_sha256``) não duplica;
+    quando a API acrescentar eventos, o hash muda e grava-se um documento novo.
+    """
+    if not settings.dietbox_bearer_token:
+        logger.error("Defina DIETBOX_BEARER_TOKEN no .env")
+        return 2
+    c = _client(settings)
+    all_items: list[dict[str, Any]] = []
+    skip = 0
+    pages = 0
+    while pages < max_pages:
+        st, raw = c.get_meta(patient_id, skip=skip, take=take)
+        if st != 200:
+            logger.error("meta sync paciente=%s HTTP=%s corpo=%r", patient_id, st, raw[:400])
+            return 1
+        data = parse_json_body(raw)
+        if isinstance(data, dict) and data.get("Success") is False:
+            logger.error(
+                "meta Success=false paciente=%s: %s",
+                patient_id,
+                data.get("Message") or data.get("message"),
+            )
+            return 1
+        items, total_items, total_pages = extract_dietbox_paged_items(data)
+        if not items:
+            break
+        all_items.extend(items)
+        pages += 1
+        if len(items) < take:
+            break
+        if total_pages is not None and pages >= total_pages:
+            break
+        skip += take
+
+    if not all_items:
+        logger.info("sync-meta paciente=%s: nenhum item (não grava documento)", patient_id)
+        return 0
+
+    bundle: dict[str, Any] = {
+        "schema": "dietbox_meta_export_v1",
+        "paciente_external_id": patient_id,
+        "item_count": len(all_items),
+        "items": all_items,
+    }
+    text = json.dumps(bundle, ensure_ascii=False, indent=2)
+    ref = join_dietbox_url(
+        settings.dietbox_api_base or "https://api.dietbox.me",
+        f"v2/meta?idPaciente={urllib.parse.quote(str(patient_id), safe='')}",
+    )
+    meta = {
+        "dietbox_paciente_id": patient_id,
+        "meta_export_pages": pages,
+        "meta_export_items": len(all_items),
+    }
+    with psycopg.connect(settings.database_url) as conn:
+        pid = upsert_patient(
+            conn,
+            source_system=SOURCE,
+            external_id=str(patient_id).strip(),
+            display_name=None,
+            metadata=meta,
+        )
+        new_id = insert_document_if_new(
+            conn,
+            patient_id=pid,
+            doc_type="dietbox_meta_export",
+            content_text=text,
+            source_ref=ref,
+        )
+    logger.info(
+        "sync-meta paciente=%s páginas=%s itens=%s doc_novo=%s",
+        patient_id,
+        pages,
+        len(all_items),
+        new_id is not None,
+    )
+    return 0
+
+
+def sync_meta_all(
+    settings: Settings,
+    *,
+    take: int,
+    max_pages_per_patient: int,
+    patient_limit: int | None,
+    sleep_ms: int,
+) -> int:
+    """``sync_meta_for_patient`` para cada ``patients`` com ``source_system=dietbox``."""
+    sleep_s = max(0, sleep_ms) / 1000.0
+    failed = 0
+    with psycopg.connect(settings.database_url) as conn:
+        with conn.cursor() as cur:
+            q = """
+                SELECT external_id FROM patients
+                WHERE source_system = %s
+                ORDER BY external_id ASC
+            """
+            params: list[Any] = [SOURCE]
+            if patient_limit is not None and patient_limit > 0:
+                q += " LIMIT %s"
+                params.append(patient_limit)
+            cur.execute(q, params)
+            ids = [str(r[0]) for r in cur.fetchall()]
+    logger.info("sync-meta-all: pacientes_na_fila=%s", len(ids))
+    for ext in ids:
+        rc = sync_meta_for_patient(
+            settings,
+            ext,
+            take=take,
+            max_pages=max_pages_per_patient,
+        )
+        if rc != 0:
+            failed += 1
+            logger.warning("sync-meta-all: paciente=%s exit=%s", ext, rc)
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+    logger.info("sync-meta-all concluído falhas=%s", failed)
+    return 0 if failed == 0 else 1
 
 
 def _post_smoke_alert_webhook(url: str, body: dict[str, Any]) -> None:
@@ -792,13 +924,42 @@ def main(argv: list[str] | None = None) -> int:
         "--meta-take",
         type=int,
         default=50,
-        help="take na query /v2/meta (com --meta)",
+        help="take na query /v2/meta (--meta, --sync-meta-patient, --sync-meta-all)",
     )
     p.add_argument(
         "--meta-skip",
         type=int,
         default=0,
         help="skip na query /v2/meta (com --meta)",
+    )
+    p.add_argument(
+        "--meta-max-pages",
+        type=int,
+        default=100,
+        help="Máximo de páginas /v2/meta por paciente (--sync-meta-patient / --sync-meta-all)",
+    )
+    p.add_argument(
+        "--sync-meta-patient",
+        metavar="PACIENTE_ID",
+        help="Pagina GET /v2/meta e grava JSON em documents (doc_type=dietbox_meta_export)",
+    )
+    p.add_argument(
+        "--sync-meta-all",
+        action="store_true",
+        help="Todos os patients dietbox: export meta por paciente (pausa --meta-all-sleep-ms)",
+    )
+    p.add_argument(
+        "--meta-all-limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Máximo de pacientes com --sync-meta-all (0 = todos)",
+    )
+    p.add_argument(
+        "--meta-all-sleep-ms",
+        type=int,
+        default=350,
+        help="Pausa entre pacientes com --sync-meta-all",
     )
     p.add_argument(
         "--formula-imc",
@@ -922,6 +1083,22 @@ def main(argv: list[str] | None = None) -> int:
             args.meta,
             skip=args.meta_skip,
             take=args.meta_take,
+        )
+    if args.sync_meta_patient:
+        return sync_meta_for_patient(
+            settings,
+            args.sync_meta_patient,
+            take=max(1, args.meta_take),
+            max_pages=max(1, args.meta_max_pages),
+        )
+    if args.sync_meta_all:
+        lim = args.meta_all_limit if args.meta_all_limit > 0 else None
+        return sync_meta_all(
+            settings,
+            take=max(1, args.meta_take),
+            max_pages_per_patient=max(1, args.meta_max_pages),
+            patient_limit=lim,
+            sleep_ms=max(0, args.meta_all_sleep_ms),
         )
     if args.formula_imc is not None or args.formula_idade is not None:
         if args.formula_imc is None or args.formula_idade is None:
