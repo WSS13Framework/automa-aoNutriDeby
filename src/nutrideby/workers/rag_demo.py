@@ -35,6 +35,7 @@ from nutrideby.clients.genai_agent import assistant_content_from_completion, cha
 from nutrideby.clients.openai_embeddings import embed_single_query
 from nutrideby.config import Settings
 from nutrideby.rag.clinical_analyst_prompts import build_system_prompt
+from nutrideby.rag.exam_hit_preprocess import extract_and_compare_exams
 from nutrideby.rag.patient_retrieve import patient_retrieve
 
 logger = logging.getLogger(__name__)
