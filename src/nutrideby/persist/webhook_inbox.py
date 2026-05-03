@@ -28,3 +28,51 @@ def insert_webhook_inbox(
         row = cur.fetchone()
         assert row is not None
         return row[0]
+
+
+def fetch_pending_webhooks(
+    conn: psycopg.Connection,
+    *,
+    source: str,
+    limit: int,
+) -> list[tuple[uuid.UUID, dict[str, Any]]]:
+    """``(id, payload)`` com ``status = pending``."""
+    limit = max(1, limit)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, payload
+            FROM integration_webhook_inbox
+            WHERE source = %s AND status = 'pending'
+            ORDER BY received_at ASC
+            LIMIT %s
+            """,
+            (source, limit),
+        )
+        rows = cur.fetchall()
+    out: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for r in rows:
+        rid, pl = r[0], r[1]
+        if not isinstance(pl, dict):
+            pl = {}
+        out.append((rid, pl))
+    return out
+
+
+def finalize_webhook_inbox(
+    conn: psycopg.Connection,
+    *,
+    row_id: uuid.UUID,
+    status: str,
+    error_message: str | None = None,
+) -> None:
+    """Marca linha como processada ou erro (``status`` + ``processed_at``)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE integration_webhook_inbox
+            SET status = %s, processed_at = now(), error_message = %s
+            WHERE id = %s
+            """,
+            (status, error_message, row_id),
+        )
