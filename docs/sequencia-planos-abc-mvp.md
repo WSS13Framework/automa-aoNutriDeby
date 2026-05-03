@@ -26,7 +26,7 @@ Complementa (não substitui) **`docs/regras-negocio-jornada-telemetria.md`**, **
 **Critérios de saída (gate A→B)**
 
 - [ ] Checklist de configuração e smoke verdes no ambiente alvo (staging ou VPS).
-- [ ] Decisão escrita: **onde** embeddings e vector store vão correr (ex.: só Postgres/pgvector vs. serviço externo) — pode ser “proposta + data de revisão”.
+- [x] Decisão escrita: **`docs/decisao-embeddings-vector-store.md`** (Postgres + pgvector, dimensão 1536, embeddings por API; revisão 2026-08-01). Migração: **`infra/sql/004_pgvector_chunks_embedding.sql`** + imagem **`pgvector/pgvector:pg16`** no Docker.
 
 ---
 
@@ -104,6 +104,7 @@ MVP    — A + B + recorte acordado de C + critério piloto
 
 | Documento | Papel |
 |-----------|--------|
+| `decisao-embeddings-vector-store.md` | **Onde** embeddings e índice vectorial correm (gate A→B). |
 | `regras-negocio-jornada-telemetria.md` | **O quê** e **porquê** (jornada, telemetria). |
 | `sprint-user-stories.md` | User stories técnicas (US-01…); ordem pode diferir da **prioridade** A/B/C. |
 | `checklist-mvp-e-endpoints.md` | Verificação concreta (comandos, endpoints). |

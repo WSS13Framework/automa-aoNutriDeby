@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector para coluna chunks.embedding (Plano B — ver docs/decisao-embeddings-vector-store.md)
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: nutrideby
       POSTGRES_PASSWORD: nutrideby_dev

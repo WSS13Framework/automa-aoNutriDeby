@@ -32,7 +32,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | Site legacy (A) | **Não feito** (não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
 | `extraction_runs` (cursor, retomada) | **Parcial** | **`--sync-prontuario-all`** cria run, actualiza `cursor_state` (`last_external_id`, `processed`); **`--prontuario-resume-run-id`** retoma. Outros jobs ainda não. |
 | GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python3 -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
-| Chunks / embeddings / FAISS | **Parcial** | **`chunk_documents`** → tabela ``chunks`` (texto segmentado; sem ``embedding_model`` / ``faiss_id``). API ``GET /v1/patients/{uuid}/chunks``. Embeddings+FAISS: não. |
+| Chunks / embeddings / FAISS | **Parcial** | **`chunk_documents`** → tabela ``chunks`` (texto segmentado; sem ``embedding_model`` / ``faiss_id``). API ``GET /v1/patients/{uuid}/chunks``. **Decisão + schema:** ``docs/decisao-embeddings-vector-store.md``, migração ``004_pgvector_chunks_embedding.sql`` (coluna ``embedding``). Worker que preenche embeddings: ainda não. |
 | API própria da nutricionista | **Não feito** | Produto à parte (Sprint 2 no plano). |
 | Jobs periódicos (cron/Celery) | **Parcial** | **`dietbox_sync --smoke`** (exit **3** em 401); webhook opcional `NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL`; doc `docs/monitorizacao-smoke-cron.md`. Celery: não. |
 

@@ -5,7 +5,8 @@ Pipeline: **ingestão** (Dietbox API v2 ou ficheiros) → **Postgres** (`patient
 ## Pré-requisitos
 
 - Python 3.10+
-- PostgreSQL com schema aplicado: `infra/sql/001_initial.sql`
+- PostgreSQL com schema aplicado: `infra/sql/001_initial.sql` (+ `002_*`, `003_*` se usares webhooks; **`004_pgvector_chunks_embedding.sql`** para RAG / `pgvector`)
+- Docker: serviço `postgres` usa imagem **`pgvector/pgvector:pg16`** (extensão `vector`). Bases **já** criadas com outra imagem: migrar ou aplicar `004` manualmente após instalar pgvector no servidor.
 - Ficheiro `.env` (usa `.env.example` como modelo)
 
 **Servidor Ubuntu (shell no host, fora do Docker):** muitas imagens mínimas só têm o binário `python3`. Usa `python3 -m nutrideby...` no host, ou (recomendado em produção) **`docker compose --profile tools run --rm worker python -m ...`** — dentro do container o comando `python` existe. Opcional no host: `sudo apt install python-is-python3`.
@@ -22,7 +23,7 @@ pip install -e .
 
 ### 1) Base de dados
 
-Garante `DATABASE_URL` no `.env` e aplica o SQL inicial na base (`infra/sql/001_initial.sql`). Bases já criadas: aplica também `002_external_snapshots.sql` para subscription persistida.
+Garante `DATABASE_URL` no `.env` e aplica o SQL inicial na base (`infra/sql/001_initial.sql`). Bases já criadas: aplica também `002_external_snapshots.sql` para subscription persistida; **`004_pgvector_chunks_embedding.sql`** para vectores (ver **`docs/decisao-embeddings-vector-store.md`**).
 
 ### 2) Importação offline (sem Dietbox)
 
