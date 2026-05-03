@@ -70,8 +70,9 @@ services:
     environment:
       PYTHONPATH: /app/src
       DATABASE_URL: postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby
+    # Host 8081: evita colisão com outros serviços (ex.: outro contentor em 8080).
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8080"
     depends_on:
       postgres:
         condition: service_healthy

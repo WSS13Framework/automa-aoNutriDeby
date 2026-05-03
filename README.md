@@ -98,7 +98,7 @@ Depois de `chunk_documents`, se usares `--force` nos chunks, volta a correr `emb
 API semântica (corpo JSON):
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8080/v1/patients/UUID_PACIENTE/retrieve" \
+curl -sS -X POST "http://127.0.0.1:8081/v1/patients/UUID_PACIENTE/retrieve" \
   -H "X-API-Key: $NUTRIDEBY_API_KEY" -H "Content-Type: application/json" \
   -d '{"query":"hipertensão e sódio","k":5}'
 ```
@@ -131,18 +131,18 @@ docker compose --profile tools run --rm worker python -m nutrideby.workers.dietb
 
 ### API leitura (Sprint 2)
 
-Serviço opcional `api` (FastAPI) em `http://127.0.0.1:8080` — lê `patients` / `documents` do Postgres.
+Serviço opcional `api` (FastAPI) em **`http://127.0.0.1:8081`** (mapeamento no `docker-compose.yml`: host **8081** → contentor **8080**, para não colidir com outro serviço na 8080, ex. outro Docker).
 
 No `.env`: `NUTRIDEBY_API_KEY` (valor opaco); pedidos a `/v1/*` levam header `X-API-Key: <valor>`. Se a chave estiver vazia, `/v1/*` fica **sem** autenticação (só para desenvolvimento).
 
 ```bash
 pip install -e .   # instala fastapi + uvicorn
 docker compose --profile api up -d api
-curl -sS http://127.0.0.1:8080/health
-curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" "http://127.0.0.1:8080/v1/patients?limit=5&source_system=dietbox"
-curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" http://127.0.0.1:8080/v1/dietbox/subscription
+curl -sS http://127.0.0.1:8081/health
+curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" "http://127.0.0.1:8081/v1/patients?limit=5&source_system=dietbox"
+curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" http://127.0.0.1:8081/v1/dietbox/subscription
 # Webhook Kiwify (MVP): POST JSON; path = mesmo valor que KIWIFY_WEBHOOK_PATH_SECRET no .env
-# curl -sS -X POST http://127.0.0.1:8080/hooks/kiwify/SEU_SEGREDO -H 'Content-Type: application/json' -d '{"test":true}'
+# curl -sS -X POST http://127.0.0.1:8081/hooks/kiwify/SEU_SEGREDO -H 'Content-Type: application/json' -d '{"test":true}'
 ```
 
 Ver **`docs/sprint-user-stories.md`** (US-01) e aplicar **`infra/sql/003_integration_webhook_inbox.sql`** na base.

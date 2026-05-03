@@ -152,7 +152,7 @@ Requer: migração `004`, Postgres com extensão `vector`, `OPENAI_API_KEY` no `
 ```bash
 python3 -m nutrideby.workers.embed_chunks --limit 10 --dry-run
 python3 -m nutrideby.workers.embed_chunks --limit 10
-curl -sS -X POST "http://127.0.0.1:8080/v1/patients/SUBSTITUIR_UUID/retrieve" \
+curl -sS -X POST "http://127.0.0.1:8081/v1/patients/SUBSTITUIR_UUID/retrieve" \
   -H "X-API-Key: $NUTRIDEBY_API_KEY" -H "Content-Type: application/json" \
   -d '{"query":"uma pergunta alinhada ao prontuário","k":3}'
 ```
