@@ -4,6 +4,7 @@ Preenche ``chunks.embedding`` via API OpenAI-compatible (``/v1/embeddings``).
   python3 -m nutrideby.workers.embed_chunks --limit 50
   python3 -m nutrideby.workers.embed_chunks --patient-id UUID --limit 200
   python3 -m nutrideby.workers.embed_chunks --force --limit 20
+  python3 -m nutrideby.workers.embed_chunks --limit 5 --batch-size 5 --http-timeout 45
 
 Requer ``DATABASE_URL``, migração ``004_pgvector_chunks_embedding.sql`` e ``OPENAI_API_KEY``.
 """
@@ -57,6 +58,7 @@ def run(
     batch_size: int,
     force: bool,
     dry_run: bool,
+    http_timeout: int,
 ) -> int:
     settings = Settings()
     key = settings.openai_api_key
@@ -97,12 +99,19 @@ def run(
             batch = rows[i : i + batch_size]
             ids = [r[0] for r in batch]
             texts = [r[1] for r in batch]
+            logger.info(
+                "embed_chunks: a chamar API embeddings offset=%s n_textos=%s timeout_s=%s",
+                i,
+                len(texts),
+                http_timeout,
+            )
             try:
                 vectors = embed_texts(
                     api_base=base,
                     api_key=str(key),
                     model=model,
                     inputs=texts,
+                    timeout=http_timeout,
                 )
             except Exception:
                 logger.exception("embed_chunks: falha API no batch offset=%s", i)
@@ -146,6 +155,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Recalcular mesmo quando embedding já existe",
     )
     p.add_argument("--dry-run", action="store_true", help="Só contar fila; não chama API")
+    p.add_argument(
+        "--http-timeout",
+        type=int,
+        default=120,
+        help="Timeout em segundos por pedido HTTP à API de embeddings (default 120)",
+    )
     args = p.parse_args(argv)
     return run(
         limit=args.limit,
@@ -153,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         batch_size=args.batch_size,
         force=args.force,
         dry_run=args.dry_run,
+        http_timeout=max(15, args.http_timeout),
     )
 
 
