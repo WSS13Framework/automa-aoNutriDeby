@@ -24,6 +24,8 @@ import json
 import logging
 import sys
 import uuid
+from pathlib import Path
+from typing import Any
 
 import psycopg
 import psycopg.errors
@@ -55,6 +57,7 @@ def run(
     as_json: bool,
     with_agent: bool,
     persona: str,
+    exam_metas: dict[str, Any] | None,
     max_tokens: int,
     exclude_prontuario_placeholder: bool,
     min_score: float | None,
@@ -110,6 +113,12 @@ def run(
         logger.warning("Sem hits — pedido ao agente só com a pergunta (sem contexto da base)")
     block = _context_block(hits) if hits else "(nenhum trecho recuperado da base)"
     system = build_system_prompt(persona, block)
+    if exam_metas is not None:
+        extra = extract_and_compare_exams(hits, exam_metas)
+        if extra.strip():
+            system = (
+                f"{system}\n\n### Pré-resumo automático (regex; validar no texto bruto)\n\n{extra}"
+            )
     # DigitalOcean GenAI Agent (OpenAI-compatible) devolve 400 se existir mensagem
     # role=system — instruções vêm da configuração do agente ou embutidas aqui no user.
     user_payload = f"{system}\n\n---\n\n**Pergunta do operador:**\n\n{query}"
@@ -316,12 +325,32 @@ def main(argv: list[str] | None = None) -> int:
         help="Com --with-agent: prompt de sistema (default | clinical | motor)",
     )
     p.add_argument("--max-tokens", type=int, default=512, help="Com --with-agent")
+    p.add_argument(
+        "--exam-metas-json",
+        metavar="PATH",
+        default=None,
+        help="Ficheiro JSON metas exame→{min,max}; pré-resumo regex antes do agente (só com --with-agent)",
+    )
     args = p.parse_args(argv)
     min_s = args.min_score
     if min_s is not None and not (0.0 <= min_s <= 1.0):
         p.error("--min-score deve estar entre 0 e 1")
     if args.persona != "default" and not args.with_agent:
         p.error("--persona clinical|motor só faz sentido com --with-agent")
+    if args.exam_metas_json and not args.with_agent:
+        p.error("--exam-metas-json requer --with-agent")
+    exam_metas: dict[str, Any] | None = None
+    if args.exam_metas_json:
+        mp = Path(args.exam_metas_json)
+        if not mp.is_file():
+            p.error(f"--exam-metas-json: ficheiro não encontrado: {mp}")
+        try:
+            raw = json.loads(mp.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            p.error(f"--exam-metas-json: JSON inválido: {e}")
+        if not isinstance(raw, dict):
+            p.error("--exam-metas-json: raiz tem de ser um objecto JSON")
+        exam_metas = raw
     if args.all_dietbox and args.with_agent:
         p.error("--with-agent não pode ser usado com --all-dietbox")
     if args.all_dietbox:
@@ -342,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         as_json=args.json,
         with_agent=args.with_agent,
         persona=args.persona,
+        exam_metas=exam_metas,
         max_tokens=max(64, args.max_tokens),
         exclude_prontuario_placeholder=not args.no_exclude_placeholder,
         min_score=min_s,

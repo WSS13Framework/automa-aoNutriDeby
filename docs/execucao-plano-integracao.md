@@ -61,6 +61,8 @@ Em máquina local com ``DATABASE_URL`` apontando ao Postgres: ``python3 -m nutri
 
 **Nota DO GenAI Agent:** se aparecer HTTP 400 *«system and developer messages are not allowed»*, o ``rag_demo`` já envia instruções + pergunta numa única mensagem ``user`` (sem ``role=system``). Actualiza o código no servidor com ``git pull``.
 
+**Pré-resumo de exames (regex opcional):** ficheiro JSON de metas + ``--exam-metas-json /caminho/metas.json`` (só com ``--with-agent``). Formato: ``{"Hemoglobina":{"min":12,"max":16},"Glicemia":{"min":null,"max":100}}``. Detecta linhas ``Nome: valor unidade`` e datas ISO ou DD/MM/AAAA nas linhas anteriores; ver ``nutrideby.rag.exam_hit_preprocess``.
+
 ## 4. `src/nutrideby/config.py`
 
 Dentro da classe `Settings`, após os campos DeepSeek:
