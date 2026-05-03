@@ -57,7 +57,12 @@ python -m nutrideby.workers.dietbox_sync --sync-subscription
 # Prontuário em massa (sequencial; extraction_runs para auditoria / retomada)
 python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-limit 50 --prontuario-sleep-ms 300
 python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID_DA_LINHA_extraction_runs
+
+# Smoke para cron (JWT): exit 0=OK, 3=HTTP 401; opcional NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL
+python -m nutrideby.workers.dietbox_sync --smoke
 ```
+
+Cron e webhook: **`docs/monitorizacao-smoke-cron.md`**; exemplo de script: **`scripts/smoke-dietbox.example.sh`**.
 
 Se no servidor der `unrecognized arguments: --sync-list`, o código está desactualizado: actualiza o repo e corre `docker compose build worker`.
 

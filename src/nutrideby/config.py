@@ -38,3 +38,6 @@ class Settings(BaseSettings):
 
     # API leitura interna (Sprint 2) — se vazio, /v1/* fica sem auth (só para dev)
     nutrideby_api_key: str | None = None
+
+    # Opcional: POST JSON quando ``dietbox_sync --smoke`` detectar HTTP 401 (Slack incoming webhook, etc.)
+    nutrideby_smoke_alert_webhook_url: str | None = None

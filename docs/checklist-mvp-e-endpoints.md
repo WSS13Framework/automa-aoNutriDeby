@@ -34,7 +34,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
 | Chunks / embeddings / FAISS | **Não feito** | Fora do sync actual. |
 | API própria da nutricionista | **Não feito** | Produto à parte (Sprint 2 no plano). |
-| Jobs periódicos (cron/Celery) | **Não feito** | Hoje: correr comandos à mão ou `cron` no servidor; monitor JWT: planeado. |
+| Jobs periódicos (cron/Celery) | **Parcial** | **`dietbox_sync --smoke`** (exit **3** em 401); webhook opcional `NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL`; doc `docs/monitorizacao-smoke-cron.md`. Celery: não. |
 
 ---
 
@@ -133,7 +133,7 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 1. ~~Prontuário **em massa**~~ → `--sync-prontuario-all` (+ opcionalmente paralelismo / fila).
 2. ~~Persistir subscription~~ → `--sync-subscription` + `external_snapshots`.
 3. ~~`extraction_runs`~~ → usado no lote de prontuário; estender a outros jobs / cursor tipo `skip` em listas API.
-4. Smoke agendado (cron) + alerta se JWT expirar (**401**); ver plano de monitorização.
+4. ~~Smoke agendado (cron) + alerta 401~~ → ``--smoke`` + doc cron/webhook; plano OpenClaw/agente continua opcional.
 5. Playwright só para o que a API **não** cobrir (prontuário na UI).
 
 ---
@@ -143,5 +143,6 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 - Estratégia produto: [estrategia-dietbox-e-api-propria.md](./estrategia-dietbox-e-api-propria.md)
 - Plano técnico GenAI / persistência: [execucao-plano-integracao.md](./execucao-plano-integracao.md)
 - Comandos rápidos: [README.md](../README.md)
+- Smoke / cron / JWT: [monitorizacao-smoke-cron.md](./monitorizacao-smoke-cron.md)
 
 **Última actualização:** 2026-05-02

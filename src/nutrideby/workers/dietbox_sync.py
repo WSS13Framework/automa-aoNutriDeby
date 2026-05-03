@@ -12,6 +12,7 @@ Conector Dietbox (API v2) — Sprint 1 / MVP.
   python -m nutrideby.workers.dietbox_sync --sync-subscription
   python -m nutrideby.workers.dietbox_sync --sync-prontuario-all [--prontuario-limit N] [--prontuario-sleep-ms 250]
   python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID
+  python -m nutrideby.workers.dietbox_sync --smoke   # cron: JWT; exit 3 em HTTP 401
 
 Requer .env: DATABASE_URL, DIETBOX_BEARER_TOKEN; opcional DIETBOX_API_BASE, DIETBOX_WEB_BASE.
 Tabela ``external_snapshots``: ``infra/sql/002_external_snapshots.sql`` (subscription persistida).
@@ -22,9 +23,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import ssl
 import sys
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -216,6 +220,75 @@ def probe_feed_list(settings: Settings) -> int:
         logger.info("Chaves topo: %s", list(data.keys())[:40])
     logger.info("Corpo (truncado): %s", str(data)[:1200])
     return 0
+
+
+def _post_smoke_alert_webhook(url: str, body: dict[str, Any]) -> None:
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url.strip(),
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "nutrideby-dietbox-smoke/1.0",
+        },
+    )
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, context=ctx, timeout=25) as resp:
+        resp.read()
+
+
+def run_dietbox_smoke(settings: Settings) -> int:
+    """
+    Smoke leve: GET ``/v2/nutritionist/subscription`` (um pedido, sem gravar na base).
+
+    Códigos de saída (úteis em cron):
+
+    - ``0`` — HTTP 200, JWT aceite.
+    - ``1`` — outro HTTP, rede, ou erro inesperado.
+    - ``2`` — ``DIETBOX_BEARER_TOKEN`` em falta.
+    - ``3`` — HTTP **401** (JWT expirado ou inválido); opcional POST para
+      ``NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL``.
+    """
+    if not settings.dietbox_bearer_token:
+        logger.error("smoke: DIETBOX_BEARER_TOKEN em falta")
+        return 2
+    c = _client(settings)
+    try:
+        st, raw = c.get_nutritionist_subscription()
+    except urllib.error.URLError:
+        logger.exception("smoke: falha de rede/SSL ao chamar Dietbox")
+        return 1
+    except Exception:
+        logger.exception("smoke: erro inesperado ao chamar Dietbox")
+        return 1
+    if st == 200:
+        logger.info("smoke OK GET /v2/nutritionist/subscription HTTP=200 bytes=%s", len(raw))
+        return 0
+    if st == 401:
+        msg = (
+            "NutriDeby smoke: Dietbox GET /v2/nutritionist/subscription → HTTP 401 "
+            "(renovar DIETBOX_BEARER_TOKEN no servidor / .env)"
+        )
+        logger.error(msg)
+        hook = settings.nutrideby_smoke_alert_webhook_url
+        if hook and str(hook).strip():
+            try:
+                _post_smoke_alert_webhook(
+                    str(hook).strip(),
+                    {
+                        "text": msg,
+                        "source": "nutrideby.dietbox_sync",
+                        "check": "smoke",
+                        "http_status": 401,
+                    },
+                )
+                logger.info("smoke: alerta enviado para webhook")
+            except Exception:
+                logger.exception("smoke: falha ao POST no webhook (exit 3 mantém-se)")
+        return 3
+    logger.error("smoke: subscription HTTP=%s corpo=%r", st, raw[:400])
+    return 1
 
 
 def _formula_imc_one_row(
@@ -704,6 +777,11 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     p = argparse.ArgumentParser(description="Conector Dietbox — API v2")
+    p.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Smoke GET subscription (cron); exit 3 se HTTP 401; opcional NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL",
+    )
     p.add_argument("--probe", metavar="PACIENTE_ID", help="Testa GET prontuário")
     p.add_argument(
         "--meta",
@@ -834,6 +912,8 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     settings = Settings()
 
+    if args.smoke:
+        return run_dietbox_smoke(settings)
     if args.probe:
         return probe_prontuario(settings, args.probe)
     if args.meta:
