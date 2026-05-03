@@ -69,7 +69,7 @@ python3 -m nutrideby.workers.dietbox_sync --sync-meta-patient ID_PACIENTE --meta
 python3 -m nutrideby.workers.dietbox_sync --sync-meta-all --meta-all-limit 10 --meta-all-sleep-ms 400
 ```
 
-Cron e webhook: **`docs/monitorizacao-smoke-cron.md`**; exemplo de script: **`scripts/smoke-dietbox.example.sh`**.
+Cron e webhook: **`docs/monitorizacao-smoke-cron.md`**; exemplo de script: **`scripts/smoke-dietbox.example.sh`**. Corrigir espaços no `.env`: **`python3 scripts/strip_env_whitespace.py`** (cria `.env.bak`).
 
 ### Chunks (texto → Postgres, sem embeddings)
 
