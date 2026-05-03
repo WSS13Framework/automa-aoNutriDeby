@@ -44,11 +44,17 @@ python -m nutrideby.workers.dietbox_sync --sync-patient ID_PACIENTE
 
 # Lista de pacientes → Postgres (source_system=dietbox)
 python -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
+
+# Mesmo filtro que o browser com IsActive=false (só inactivos)
+python -m nutrideby.workers.dietbox_sync --sync-list --inactive-only --take 10 --max-pages 1
+
+# SituacaoIMC em lote (pacientes já em Postgres; GET paciente + fórmula por defeito)
+python -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 2
 ```
 
 Se no servidor der `unrecognized arguments: --sync-list`, o código está desactualizado: actualiza o repo e corre `docker compose build worker`.
 
-Aumenta `--max-pages` para sincronizar mais páginas. `--include-inactive` remove o filtro `IsActive`.
+Aumenta `--max-pages` para sincronizar mais páginas. Por omissão envia `IsActive=true`. `--include-inactive` omite o parâmetro (todos). `--inactive-only` envia `IsActive=false` (como no DevTools quando a lista são inactivos).
 
 ## Docker (servidor)
 

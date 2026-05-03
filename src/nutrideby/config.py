@@ -21,9 +21,6 @@ class Settings(BaseSettings):
     crm_login_password_selector: str | None = None
     crm_login_submit_selector: str | None = None
 
-    dietbox_api_base: str = "https://api.dietbox.me"
-    dietbox_bearer_token: str | None = None
-
     deepseek_api_key: str | None = None
     deepseek_api_base: str = "https://api.deepseek.com"
 
@@ -33,6 +30,8 @@ class Settings(BaseSettings):
     playwright_headless: bool = True
     playwright_storage_state: str | None = None
 
-    # Dietbox API v2 (Bearer do browser / B2C)
+    # Dietbox: API JSON + site (fórmulas MVC — mesmo Bearer na prática)
     dietbox_api_base: str = "https://api.dietbox.me"
     dietbox_bearer_token: str | None = None
+    dietbox_web_base: str = "https://dietbox.me"
+    dietbox_web_locale: str = "pt-BR"
