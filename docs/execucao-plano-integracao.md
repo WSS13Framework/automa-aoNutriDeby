@@ -49,6 +49,9 @@ curl -sS -X POST "https://SEU_HOST/v1/patients/UUID_PACIENTE/retrieve" \
 ```bash
 python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Pergunta"
 python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Pergunta" --with-agent
+# Prompts clínicos acordados (texto em ``src/nutrideby/rag/clinical_analyst_prompts.py``):
+python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Analise os exames" --with-agent --persona clinical
+python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Resumo para o prontuário" --with-agent --persona motor
 ```
 
 ## 4. `src/nutrideby/config.py`

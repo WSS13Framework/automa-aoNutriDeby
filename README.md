@@ -111,6 +111,8 @@ Resposta: `hits[]` com `chunk_id`, `text`, `distance`, `score` (monotónico; men
 python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "pergunta sobre a ficha"
 python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "..." --json
 python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "..." --with-agent
+# Com agente: prompts clínicos em ``nutrideby.rag.clinical_analyst_prompts`` — ``--persona clinical`` ou ``--persona motor``
+python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "Analise os exames" --with-agent --persona clinical
 ```
 
 OpenClaw / tool HTTP: ver **`docs/execucao-plano-integracao.md`** §3.1.

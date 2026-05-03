@@ -9,6 +9,10 @@ resposta via agente DigitalOcean GenAI com contexto citável.
 
 Requer ``DATABASE_URL``, ``OPENAI_API_KEY``, migração 004 e chunks com ``embedding``.
 ``--with-agent`` requer ``GENAI_AGENT_URL`` e ``GENAI_AGENT_ACCESS_KEY``.
+
+Personas (só com ``--with-agent``): ``--persona default`` (comportamento original),
+``--persona clinical`` (Analista Clínico + TACO), ``--persona motor`` (motor de
+inteligência — Resumo / Análise / Conduta). Ver ``nutrideby.rag.clinical_analyst_prompts``.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from psycopg.rows import dict_row
 from nutrideby.clients.genai_agent import assistant_content_from_completion, chat_completion
 from nutrideby.clients.openai_embeddings import embed_single_query
 from nutrideby.config import Settings
+from nutrideby.rag.clinical_analyst_prompts import build_system_prompt
 from nutrideby.rag.patient_retrieve import patient_retrieve
 
 logger = logging.getLogger(__name__)
@@ -47,6 +52,7 @@ def run(
     k: int,
     as_json: bool,
     with_agent: bool,
+    persona: str,
     max_tokens: int,
     exclude_prontuario_placeholder: bool,
     min_score: float | None,
@@ -101,13 +107,7 @@ def run(
     if not hits:
         logger.warning("Sem hits — pedido ao agente só com a pergunta (sem contexto da base)")
     block = _context_block(hits) if hits else "(nenhum trecho recuperado da base)"
-    system = (
-        "És um assistente de apoio à nutrição. Usa **apenas** o contexto abaixo "
-        "(trechos da ficha / documentos do paciente) para fundamentar a resposta. "
-        "Se o contexto não bastar, diz-o explicitamente. Quando citares factos, "
-        "indica o chunk_id correspondente.\n\n"
-        f"Contexto:\n\n{block}"
-    )
+    system = build_system_prompt(persona, block)
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": query},
@@ -303,11 +303,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Após retrieval, envia contexto + pergunta ao agente DO GenAI",
     )
+    p.add_argument(
+        "--persona",
+        choices=("default", "clinical", "motor"),
+        default="default",
+        help="Com --with-agent: prompt de sistema (default | clinical | motor)",
+    )
     p.add_argument("--max-tokens", type=int, default=512, help="Com --with-agent")
     args = p.parse_args(argv)
     min_s = args.min_score
     if min_s is not None and not (0.0 <= min_s <= 1.0):
         p.error("--min-score deve estar entre 0 e 1")
+    if args.persona != "default" and not args.with_agent:
+        p.error("--persona clinical|motor só faz sentido com --with-agent")
     if args.all_dietbox and args.with_agent:
         p.error("--with-agent não pode ser usado com --all-dietbox")
     if args.all_dietbox:
@@ -327,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         k=max(1, min(args.k, 20)),
         as_json=args.json,
         with_agent=args.with_agent,
+        persona=args.persona,
         max_tokens=max(64, args.max_tokens),
         exclude_prontuario_placeholder=not args.no_exclude_placeholder,
         min_score=min_s,
