@@ -691,13 +691,21 @@ def sync_prontuario_all(
             processed = 0
 
         with conn.cursor() as cur:
-            q = """
-                SELECT external_id FROM patients
-                WHERE source_system = %s
-                  AND (%s IS NULL OR external_id > %s)
-                ORDER BY external_id ASC
-            """
-            params: list[Any] = [SOURCE, last_ext, last_ext]
+            # Evitar ``NULL`` em dois placeholders seguidos: o Postgres não infere o tipo ($2).
+            if last_ext is None:
+                q = """
+                    SELECT external_id FROM patients
+                    WHERE source_system = %s
+                    ORDER BY external_id ASC
+                """
+                params: list[Any] = [SOURCE]
+            else:
+                q = """
+                    SELECT external_id FROM patients
+                    WHERE source_system = %s AND external_id > %s
+                    ORDER BY external_id ASC
+                """
+                params = [SOURCE, last_ext]
             if limit is not None and limit > 0:
                 q += " LIMIT %s"
                 params.append(limit)
