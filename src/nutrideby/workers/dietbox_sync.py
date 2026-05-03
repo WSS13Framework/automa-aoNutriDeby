@@ -9,8 +9,12 @@ Conector Dietbox (API v2) — Sprint 1 / MVP.
   python -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 4
   python -m nutrideby.workers.dietbox_sync --feed-list
   python -m nutrideby.workers.dietbox_sync --subscription
+  python -m nutrideby.workers.dietbox_sync --sync-subscription
+  python -m nutrideby.workers.dietbox_sync --sync-prontuario-all [--prontuario-limit N] [--prontuario-sleep-ms 250]
+  python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID
 
 Requer .env: DATABASE_URL, DIETBOX_BEARER_TOKEN; opcional DIETBOX_API_BASE, DIETBOX_WEB_BASE.
+Tabela ``external_snapshots``: ``infra/sql/002_external_snapshots.sql`` (subscription persistida).
 """
 
 from __future__ import annotations
@@ -19,7 +23,9 @@ import argparse
 import json
 import logging
 import sys
+import time
 import urllib.parse
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -39,6 +45,17 @@ from nutrideby.clients.dietbox_api import (
 )
 from nutrideby.config import Settings
 from nutrideby.persist.crm_persist import insert_document_if_new, upsert_patient
+from nutrideby.persist.extraction_runs import (
+    JOB_DIETBOX_PRONTUARIO_BULK,
+    create_run,
+    finish_run,
+    get_run,
+    update_run,
+)
+from nutrideby.persist.snapshots import (
+    KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
+    upsert_external_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +162,38 @@ def probe_subscription(settings: Settings) -> int:
     if isinstance(data, dict):
         logger.info("Chaves topo: %s", list(data.keys())[:50])
     logger.info("Corpo (truncado): %s", str(data)[:1500])
+    return 0
+
+
+def sync_subscription_persist(settings: Settings) -> int:
+    """GET subscription e ``upsert`` em ``external_snapshots`` (chave estável)."""
+    if not settings.dietbox_bearer_token:
+        logger.error("Defina DIETBOX_BEARER_TOKEN")
+        return 2
+    c = _client(settings)
+    st, raw = c.get_nutritionist_subscription()
+    if st != 200:
+        logger.error("subscription HTTP=%s corpo=%r", st, raw[:500])
+        return 1
+    data = parse_json_body(raw)
+    if isinstance(data, (dict, list)):
+        payload: Any = data
+    else:
+        payload = {"_raw_type": type(data).__name__, "repr": str(data)[:8000]}
+    try:
+        with psycopg.connect(settings.database_url) as conn:
+            upsert_external_snapshot(
+                conn,
+                key=KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
+                payload=payload,
+                http_status=st,
+            )
+    except psycopg.errors.UndefinedTable:
+        logger.error(
+            "Tabela external_snapshots em falta. Aplica: psql $DATABASE_URL -f infra/sql/002_external_snapshots.sql",
+        )
+        return 2
+    logger.info("sync-subscription gravada key=%s", KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION)
     return 0
 
 
@@ -314,6 +363,52 @@ def sync_formula_imc_all(
     return 0 if err == 0 and http == 0 else 1
 
 
+def _prontuario_text_from_response(st: int, body: bytes) -> str:
+    if st == 204 or not body:
+        return "[Prontuário: API 204 sem corpo]"
+    try:
+        return json.dumps(
+            json.loads(body.decode("utf-8")),
+            ensure_ascii=False,
+            indent=2,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return body.decode("utf-8", errors="replace")
+
+
+def apply_prontuario_response(
+    settings: Settings,
+    conn: psycopg.Connection,
+    patient_id: str,
+    st: int,
+    body: bytes,
+    *,
+    preserve_display_name: bool,
+) -> uuid.UUID | None:
+    """Upsert paciente + documento idempotente. Devolve id do documento se inserido."""
+    text = _prontuario_text_from_response(st, body)
+    meta = {"dietbox_paciente_id": patient_id, "prontuario_http_status": st}
+    ref = join_dietbox_url(
+        settings.dietbox_api_base or "https://api.dietbox.me",
+        f"v2/paciente/{patient_id}/prontuario",
+    )
+    display_name = None if preserve_display_name else f"Dietbox #{patient_id}"
+    pid = upsert_patient(
+        conn,
+        source_system=SOURCE,
+        external_id=patient_id,
+        display_name=display_name,
+        metadata=meta,
+    )
+    return insert_document_if_new(
+        conn,
+        patient_id=pid,
+        doc_type="dietbox_prontuario",
+        content_text=text,
+        source_ref=ref,
+    )
+
+
 def sync_one_prontuario(settings: Settings, patient_id: str) -> int:
     """Grava paciente + conteúdo do prontuário (200 JSON ou 204 marcador)."""
     if not settings.dietbox_bearer_token:
@@ -324,38 +419,154 @@ def sync_one_prontuario(settings: Settings, patient_id: str) -> int:
     if st not in (200, 204):
         logger.error("HTTP %s", st)
         return 1
-    if st == 204 or not body:
-        text = "[Prontuário: API 204 sem corpo]"
-    else:
-        try:
-            text = json.dumps(
-                json.loads(body.decode("utf-8")),
-                ensure_ascii=False,
-                indent=2,
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            text = body.decode("utf-8", errors="replace")
-    meta = {"dietbox_paciente_id": patient_id, "prontuario_http_status": st}
-    ref = join_dietbox_url(
-        settings.dietbox_api_base or "https://api.dietbox.me",
-        f"v2/paciente/{patient_id}/prontuario",
-    )
     with psycopg.connect(settings.database_url) as conn:
-        pid = upsert_patient(
+        new = apply_prontuario_response(
+            settings,
             conn,
-            source_system=SOURCE,
-            external_id=patient_id,
-            display_name=f"Dietbox #{patient_id}",
-            metadata=meta,
+            patient_id,
+            st,
+            body,
+            preserve_display_name=False,
         )
-        new = insert_document_if_new(
+        logger.info("sync-one prontuário doc_novo=%s", new is not None)
+    return 0
+
+
+def sync_prontuario_all(
+    settings: Settings,
+    *,
+    limit: int | None,
+    sleep_ms: int,
+    resume_run_id: uuid.UUID | None,
+) -> int:
+    """Prontuário em lote para ``patients`` com ``source_system=dietbox``; regista ``extraction_runs``."""
+    if not settings.dietbox_bearer_token:
+        logger.error("Defina DIETBOX_BEARER_TOKEN")
+        return 2
+    c = _client(settings)
+    sleep_s = max(0, sleep_ms) / 1000.0
+    http_other = 0
+    new_docs = 0
+
+    with psycopg.connect(settings.database_url) as conn:
+        if resume_run_id is not None:
+            info = get_run(conn, resume_run_id)
+            if not info:
+                logger.error("extraction_run não encontrado: %s", resume_run_id)
+                return 2
+            if info["status"] not in ("running", "failed"):
+                logger.warning(
+                    "Retomar run com status=%s (esperado running/failed)",
+                    info["status"],
+                )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE extraction_runs
+                    SET status = 'running', finished_at = NULL, error_message = NULL
+                    WHERE id = %s
+                    """,
+                    (resume_run_id,),
+                )
+            run_id = resume_run_id
+            cs = info["cursor_state"]
+            last_ext: str | None = cs.get("last_external_id") if isinstance(cs, dict) else None
+            processed = int((cs.get("processed") if isinstance(cs, dict) else 0) or 0)
+        else:
+            run_id = create_run(
+                conn,
+                cursor_state={
+                    "job": JOB_DIETBOX_PRONTUARIO_BULK,
+                    "last_external_id": None,
+                    "processed": 0,
+                },
+                stats={},
+            )
+            last_ext = None
+            processed = 0
+
+        with conn.cursor() as cur:
+            q = """
+                SELECT external_id FROM patients
+                WHERE source_system = %s
+                  AND (%s IS NULL OR external_id > %s)
+                ORDER BY external_id ASC
+            """
+            params: list[Any] = [SOURCE, last_ext, last_ext]
+            if limit is not None and limit > 0:
+                q += " LIMIT %s"
+                params.append(limit)
+            cur.execute(q, params)
+            external_ids = [str(r[0]) for r in cur.fetchall()]
+
+        logger.info(
+            "sync-prontuario-all: run_id=%s retomada=%s pacientes_na_fila=%s",
+            run_id,
+            resume_run_id is not None,
+            len(external_ids),
+        )
+
+        for ext_id in external_ids:
+            st, body = c.get_prontuario(ext_id)
+            if st == 401:
+                finish_run(
+                    conn,
+                    run_id,
+                    status="failed",
+                    error_message="HTTP 401 (JWT inválido ou expirado)",
+                    stats={"processed": processed, "new_documents": new_docs, "http_other": http_other},
+                )
+                logger.error("sync-prontuario-all: HTTP 401 — JWT; run marcada failed")
+                return 1
+            if st not in (200, 204):
+                logger.warning("paciente=%s prontuário HTTP=%s (ignorar e continuar)", ext_id, st)
+                http_other += 1
+            else:
+                new_id = apply_prontuario_response(
+                    settings,
+                    conn,
+                    ext_id,
+                    st,
+                    body,
+                    preserve_display_name=True,
+                )
+                if new_id is not None:
+                    new_docs += 1
+
+            processed += 1
+            last_ext = ext_id
+            update_run(
+                conn,
+                run_id,
+                cursor_state={
+                    "job": JOB_DIETBOX_PRONTUARIO_BULK,
+                    "last_external_id": last_ext,
+                    "processed": processed,
+                },
+                stats={"new_documents": new_docs, "http_other": http_other},
+            )
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+
+        finish_run(
             conn,
-            patient_id=pid,
-            doc_type="dietbox_prontuario",
-            content_text=text,
-            source_ref=ref,
+            run_id,
+            status="completed",
+            stats={
+                "processed": processed,
+                "new_documents": new_docs,
+                "http_other": http_other,
+            },
         )
-        logger.info("sync-one prontuário internal_id=%s doc_novo=%s", pid, new is not None)
+
+    logger.info(
+        "sync-prontuario-all concluído: processados=%s docs_novos=%s http_não_200_204=%s",
+        processed,
+        new_docs,
+        http_other,
+    )
+    if http_other:
+        logger.warning("Alguns pedidos devolveram HTTP fora de 200/204; rever logs.")
     return 0
 
 
@@ -560,7 +771,37 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--subscription",
         action="store_true",
-        help="Testa GET api /v2/nutritionist/subscription (subscrição)",
+        help="Testa GET api /v2/nutritionist/subscription (subscrição; só log)",
+    )
+    p.add_argument(
+        "--sync-subscription",
+        action="store_true",
+        help="GET subscription e grava JSON em external_snapshots (requer migração 002)",
+    )
+    p.add_argument(
+        "--sync-prontuario-all",
+        action="store_true",
+        help="Prontuário para todos os patients dietbox; regista extraction_runs (pausa sleep entre pedidos)",
+    )
+    p.add_argument(
+        "--prontuario-limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Máximo de pacientes por execução (0 = todos os que couberem na query)",
+    )
+    p.add_argument(
+        "--prontuario-sleep-ms",
+        type=int,
+        default=250,
+        help="Pausa entre pedidos HTTP (rate limit)",
+    )
+    p.add_argument(
+        "--prontuario-resume-run-id",
+        type=uuid.UUID,
+        default=None,
+        metavar="UUID",
+        help="Retoma último cursor (last_external_id) na mesma linha extraction_runs",
     )
     p.add_argument(
         "--sync-one",
@@ -618,8 +859,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.feed_list:
         return probe_feed_list(settings)
+    if args.sync_subscription:
+        return sync_subscription_persist(settings)
     if args.subscription:
         return probe_subscription(settings)
+    if args.sync_prontuario_all:
+        lim = args.prontuario_limit if args.prontuario_limit > 0 else None
+        return sync_prontuario_all(
+            settings,
+            limit=lim,
+            sleep_ms=max(0, args.prontuario_sleep_ms),
+            resume_run_id=args.prontuario_resume_run_id,
+        )
     if args.sync_one:
         return sync_one_prontuario(settings, args.sync_one)
     if args.sync_patient:

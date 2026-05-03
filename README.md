@@ -20,7 +20,7 @@ pip install -e .
 
 ### 1) Base de dados
 
-Garante `DATABASE_URL` no `.env` e aplica o SQL inicial na base.
+Garante `DATABASE_URL` no `.env` e aplica o SQL inicial na base (`infra/sql/001_initial.sql`). Bases já criadas: aplica também `002_external_snapshots.sql` para subscription persistida.
 
 ### 2) Importação offline (sem Dietbox)
 
@@ -50,6 +50,13 @@ python -m nutrideby.workers.dietbox_sync --sync-list --inactive-only --take 10 -
 
 # SituacaoIMC em lote (pacientes já em Postgres; GET paciente + fórmula por defeito)
 python -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 2
+
+# Subscription → tabela external_snapshots (aplica antes infra/sql/002_external_snapshots.sql se a base já existia)
+python -m nutrideby.workers.dietbox_sync --sync-subscription
+
+# Prontuário em massa (sequencial; extraction_runs para auditoria / retomada)
+python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-limit 50 --prontuario-sleep-ms 300
+python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID_DA_LINHA_extraction_runs
 ```
 
 Se no servidor der `unrecognized arguments: --sync-list`, o código está desactualizado: actualiza o repo e corre `docker compose build worker`.
@@ -77,6 +84,7 @@ pip install -e .   # instala fastapi + uvicorn
 docker compose --profile api up -d api
 curl -sS http://127.0.0.1:8080/health
 curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" "http://127.0.0.1:8080/v1/patients?limit=5&source_system=dietbox"
+curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" http://127.0.0.1:8080/v1/dietbox/subscription
 ```
 
 ## Documentação

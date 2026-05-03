@@ -22,14 +22,15 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | Lista pacientes (C) → Postgres `patients` | **Feito** | `dietbox_sync --sync-list`; envelope `Data`; `--include-inactive` / `--inactive-only`; piloto com centenas de upserts. |
 | API leitura Sprint 2 (FastAPI) | **Feito** (mínimo) | `nutrideby.api.main:app` — `GET /health`, `/v1/patients`, `/v1/patients/{uuid}`, `/v1/patients/by-external/...`, `/v1/patients/{uuid}/documents`; `docker compose --profile api up`; `NUTRIDEBY_API_KEY` + header `X-API-Key`. |
 | Probe prontuário (D) | **Feito** (mínimo) | `--probe`; loga HTTP; **não** grava `documents`. |
+| Prontuário em massa (D) | **Feito** (mínimo) | **`--sync-prontuario-all`** — iterar `patients` dietbox, `--prontuario-sleep-ms`, `--prontuario-limit`, retomada por run id. |
 | Prontuário 200 com corpo → `documents` | **Feito** | `--sync-one`: JSON em `documents` (`doc_type=dietbox_prontuario`, `insert_document_if_new`). |
 | Prontuário 204 → marcador / política | **Feito** | `--sync-one`: texto `[Prontuário: API 204 sem corpo]` + mesmo `doc_type` (idempotente por hash). |
 | Detalhe paciente → `patients` | **Feito** | `--sync-patient` (GET `/v2/paciente/{id}`). |
-| Subscription (B) | **Parcial** | `--subscription` (probe HTTP + log); **persistir** JSON na base (metadata global / tabela): ainda não. |
+| Subscription (B) | **Feito** | `--subscription` (probe); **`--sync-subscription`** → `external_snapshots`; `GET /v1/dietbox/subscription` na API. Migração `infra/sql/002_external_snapshots.sql`. |
 | Site MVC (fórmulas / feed) | **Parcial** | `SituacaoIMC` (`--formula-*`, `--sync-formula-imc-all`), `--feed-list`; IIS; mesmo Bearer; frágil vs API v2. |
 | `/v2/meta` paciente | **Parcial** | `--meta` (probe); ingestão em massa para `documents`: não. |
 | Site legacy (A) | **Não feito** (não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
-| `extraction_runs` (cursor, retomada) | **Não feito** | Tabela existe no SQL; worker não regista ainda. |
+| `extraction_runs` (cursor, retomada) | **Parcial** | **`--sync-prontuario-all`** cria run, actualiza `cursor_state` (`last_external_id`, `processed`); **`--prontuario-resume-run-id`** retoma. Outros jobs ainda não. |
 | GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
 | Chunks / embeddings / FAISS | **Não feito** | Fora do sync actual. |
 | API própria da nutricionista | **Não feito** | Produto à parte (Sprint 2 no plano). |
@@ -129,9 +130,9 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 
 ## 4. Próximas implementações (ordem sugerida pós-MVP)
 
-1. Prontuário **em massa** (job: iterar `patients` → `--sync-one` ou batch) + rate limit / retomada.
-2. Persistir resposta de `GET /v2/nutritionist/subscription` (hoje só `--subscription` probe).
-3. `extraction_runs` + cursor `skip` para retomada idempotente.
+1. ~~Prontuário **em massa**~~ → `--sync-prontuario-all` (+ opcionalmente paralelismo / fila).
+2. ~~Persistir subscription~~ → `--sync-subscription` + `external_snapshots`.
+3. ~~`extraction_runs`~~ → usado no lote de prontuário; estender a outros jobs / cursor tipo `skip` em listas API.
 4. Smoke agendado (cron) + alerta se JWT expirar (**401**); ver plano de monitorização.
 5. Playwright só para o que a API **não** cobrir (prontuário na UI).
 
@@ -143,4 +144,4 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 - Plano técnico GenAI / persistência: [execucao-plano-integracao.md](./execucao-plano-integracao.md)
 - Comandos rápidos: [README.md](../README.md)
 
-**Última actualização:** 2026-05-03
+**Última actualização:** 2026-05-02

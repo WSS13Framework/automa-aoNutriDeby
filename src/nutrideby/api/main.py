@@ -9,12 +9,17 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import psycopg
+import psycopg.errors
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
 from nutrideby.config import Settings
+from nutrideby.persist.snapshots import (
+    KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
+    get_external_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +102,36 @@ def _conn(settings: Settings) -> psycopg.Connection:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/dietbox/subscription", dependencies=[Depends(require_api_key)])
+def dietbox_subscription_snapshot(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """Última subscription Dietbox persistida (``--sync-subscription``)."""
+    try:
+        with psycopg.connect(settings.database_url) as conn:
+            row = get_external_snapshot(
+                conn,
+                key=KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
+            )
+    except psycopg.errors.UndefinedTable as e:
+        raise HTTPException(
+            status_code=503,
+            detail="Tabela external_snapshots em falta. Aplica infra/sql/002_external_snapshots.sql",
+        ) from e
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail="Sem snapshot; correr: python -m nutrideby.workers.dietbox_sync --sync-subscription",
+        )
+    payload, fetched_at, http_status = row
+    return {
+        "key": KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
+        "fetched_at": fetched_at,
+        "http_status": http_status,
+        "payload": payload,
+    }
 
 
 @app.get("/v1/patients", dependencies=[Depends(require_api_key)])
