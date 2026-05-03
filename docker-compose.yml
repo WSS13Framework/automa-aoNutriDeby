@@ -32,15 +32,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
     environment:
       PYTHONPATH: /app/src
+      # Sobrescreve .env se lá tiver localhost — dentro do contentor o host é o serviço ``postgres``.
       DATABASE_URL: postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby
       REDIS_URL: redis://redis:6379/0
-      GENAI_AGENT_URL: ${GENAI_AGENT_URL:-}
-      GENAI_AGENT_ACCESS_KEY: ${GENAI_AGENT_ACCESS_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_API_BASE: ${OPENAI_API_BASE:-https://api.openai.com}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,10 +70,6 @@ services:
     environment:
       PYTHONPATH: /app/src
       DATABASE_URL: postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby
-      NUTRIDEBY_API_KEY: ${NUTRIDEBY_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_API_BASE: ${OPENAI_API_BASE:-https://api.openai.com}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
