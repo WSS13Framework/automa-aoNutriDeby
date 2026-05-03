@@ -9,6 +9,37 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# O endpoint do agente com ``?agent=true`` devolve 400 se ``messages`` incluir
+# ``role: system`` ou ``role: developer`` ("set via agent configuration").
+# Colapsamos tudo num único ``user`` para compatibilidade com pedidos antigos ou outros callers.
+def _collapse_to_single_user_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not messages:
+        return [{"role": "user", "content": ""}]
+    if len(messages) == 1 and str(messages[0].get("role", "user")).strip().lower() == "user":
+        return messages
+    chunks: list[str] = []
+    saw_restricted = False
+    for m in messages:
+        role = str(m.get("role", "user")).strip().lower()
+        c = m.get("content")
+        text = c if isinstance(c, str) else json.dumps(c, ensure_ascii=False)
+        if role in ("system", "developer"):
+            saw_restricted = True
+            chunks.append(f"## Instruções ({role})\n\n{text}")
+        elif role == "user":
+            chunks.append(f"## Pedido\n\n{text}")
+        elif role == "assistant":
+            chunks.append(f"## Assistente (histórico)\n\n{text}")
+        else:
+            chunks.append(f"## {role}\n\n{text}")
+    combined = "\n\n---\n\n".join(chunks)
+    if saw_restricted:
+        logger.info(
+            "genai_agent: colapsadas mensagens system/developer num único role=user (requisito DO GenAI Agent)"
+        )
+    return [{"role": "user", "content": combined}]
+
+
 # A DO costuma expor /api/v1/...; /v1/... devolve 404 em muitos agentes.
 _COMPLETION_PATHS = (
     "/api/v1/chat/completions?agent=true",
@@ -94,15 +125,19 @@ def chat_completion(
 ) -> tuple[int, str, str]:
     """
     POST estilo OpenAI ao agente DO GenAI. Devolve ``(http_status, corpo_json, path_usado)``.
+
+    Mensagens ``system`` / ``developer`` são fundidas num único ``user`` (requisito do
+    endpoint com ``agent=true``). Um único ``user`` passa inalterado.
     Erro de rede ou resposta não-2xx após esgotar paths → ``RuntimeError``.
     """
     access_key = access_key.strip()
     if not access_key:
         raise RuntimeError("GENAI_AGENT_ACCESS_KEY vazio")
     base = agent_base_url.rstrip("/")
+    safe_messages = _collapse_to_single_user_message(messages)
     body: dict[str, Any] = {
         "model": "ignored",
-        "messages": messages,
+        "messages": safe_messages,
         "max_tokens": max_tokens,
     }
     last_err: str | None = None
