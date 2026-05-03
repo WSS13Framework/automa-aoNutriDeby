@@ -39,6 +39,29 @@ Documento de **alinhamento produto + técnica** para sprints seguintes. Resume a
 - A inteligência **lê macros**, **compara** com o que faz sentido para **aquele** paciente (restrições, scores, histórico) e **guarda** conclusões e inputs no **histórico** (auditoria + evolução no tempo).
 - O acompanhamento é **ancorado no que o plano cobre**: não é um chat genérico; as perguntas, lembretes e análises respeitam o **âmbito contratado** (ex.: tipos de exames incluídos, frequência de check-ins, módulos activos).
 
+**Nota:** qualquer menção anterior a **“AXIS”** foi **erro de digitação** — não corresponde a produto nem a eixo técnico nomeado neste projecto.
+
+### 4.1 Variedade e alimentação prática (24×7, sem monotonia)
+
+- **Receitas** sugeridas ao longo do tempo, **variadas**, para o paciente **não cair na monotonia**, sempre **alinhadas ao perfil clínico e nutricional** da pessoa (restrições, objectivos, “ponto alto” / preferências e tolerâncias que o plano e o histórico justificam).
+- **Lista de compras semanal** (e ajustes conforme fase do plano), com **alimentos específicos** para ela.
+- Para esses alimentos: orientação sobre **como usar**, **como confeccionar**, **como digerir melhor** (contexto clínico), **como sanitizar / tratar em segurança** (higiene, manipulação), sempre **fundamentada nas questões clínicas** do paciente.
+
+### 4.2 Treino, potenciação alimentar e suplementação
+
+- **Dicas de treino** coerentes com o estado e o plano (sem substituir educador físico quando aplicável).
+- **Como potenciar** o efeito de cada alimento (combinações, timing, hidratação, etc.) dentro do que o histórico clínico permite.
+- **Suplementação** discutida **em conjunto com** o **histórico clínico** e avaliação (exames, medicação, contraindicações) — nunca genérica; cruzamento explícito com **avaliação** e regras do plano.
+
+### 4.3 Segmento de avaliação por fotos e dados objectivos (ex.: bioimpedância)
+
+- **Avaliações por fotos** (refeições, pratos, contexto) como **segmento próprio** do fluxo: **procedimento** claro (o que fotografar, como enviar, prazos), **critérios** de feedback, e decisão de produto sobre **o que é viável 100% online** vs. o que exige **presencial** ou **terceiros** (ex.: equipamento do ginásio).
+- **Bioimpedância / composição corporal** (BIA): avaliar **se e como** integrar — por exemplo, se o **ginásio** do paciente dispõe de equipamento e **pode enviar** (ficheiro, PDF, export) para a **inteligência** analisar e **ajustar planos** com base nessa informação **cruzada** com o restante do dossiê. O desenho exacto (formato, validade clínica, responsabilidade profissional) fica para **validação** com a nutricionista e para **backlog técnico** (ingestão, parsers, anti-fraude mínimo).
+
+### 4.4 Ecossistema de bem-estar
+
+- Visão de **ecossistema completo** voltado ao **bem-estar** do paciente — alimentação, cuidado, treino, fitoterapia, linhas mais técnicas quando previstas no plano — **sempre** com **lastro nas questões clínicas** e no **histórico**; a inteligência **fecha** leituras e sugestões com **rastreio** (de onde vieram os dados e porquê aquela conclusão), para suportar **acompanhamento 24×7** no telemóvel sem perder o fio clínico.
+
 ---
 
 ## 5. Inteligência e “nuances” nutricionais
@@ -50,6 +73,7 @@ A inteligência deve suportar, entre outros:
 - Uso de **questionários estruturados** (sinais, sintomas, adesão, contexto social — ex.: “festa”).
 - **Relatórios** periódicos ou sob pedido, **fundamentados no histórico clínico-alimentar** acumulado, para reduzir ansiedade (“sei o que estou a fazer com os meus dados”).
 - **Base de conhecimento** alinhada a nutrição clínica e boas práticas (sem substituir julgamento da nutricionista onde a lei ou deontologia o exigirem).
+- Tudo o descrito em **4.1–4.4** (receitas, listas, treino, suplementação, fotos, BIA, bem-estar) como **camadas** sobre o mesmo **núcleo**: dados do paciente + plano + evidência.
 
 ---
 
@@ -57,7 +81,7 @@ A inteligência deve suportar, entre outros:
 
 | Aspecto | Regra |
 |---------|--------|
-| **Telemetria / suporte digital** | Disponível **24×7** no sentido de **registar, processar e responder** com base em dados e políticas (dentro dos limites técnicos e legais). |
+| **Telemetria / suporte digital** | Disponível **24×7** no sentido de **registar, processar e responder** com base em dados e políticas — incluindo **receitas**, **listas de compras**, **dicas** e **avaliações por fotos** (ver §4), sem ser monótono (dentro dos limites técnicos e legais). |
 | **Contacto humano presencial (nutricionista)** | **Avaliação presencial** alinhada ao **fecho do pacote** (ex.: ciclo de **três meses**), em data acordada — não substituída pela telemetria, mas **complementada** por ela. |
 
 Mensagem-chave para o paciente: **acompanhamento contínuo no telemóvel** + **ponto de contacto humano** no fecho do ciclo / renovação.
@@ -73,7 +97,9 @@ Estes itens **não** são implementação neste ficheiro; servem para **prioriza
 3. **Segregação de canais:** configuração clara de qual instância OpenClaw / qual número WhatsApp é **vendas** vs. **telemetria** (evitar mistura de segredos `.env`).
 4. **LGPD e minimização:** consentimentos, retenção, acesso; dados clínicos concentrados na infra da **telemetria**.
 5. **Relatórios e “scores”:** definição formal de **métricas** (o que é “score”, de onde vem, como actualiza).
-6. **Observabilidade:** jobs, falhas de webhook, falhas de API Dietbox (já há smoke JWT no worker).
+6. **Módulos de conteúdo:** motor de **receitas** personalizáveis; gerador de **lista de compras** semanal; templates de **dicas** (digestão, sanitização, treino) com variantes por perfil clínico.
+7. **Fluxo “avaliação por fotos”:** estados (enviado → em análise → feedback), limites do que é **online** vs. **presencial**; eventual pipeline de **bioimpedância** / export do ginásio (formato, validação).
+8. **Observabilidade:** jobs, falhas de webhook, falhas de API Dietbox (já há smoke JWT no worker).
 
 ---
 
@@ -90,7 +116,7 @@ Estes itens **não** são implementação neste ficheiro; servem para **prioriza
 
 ## 9. Revisão deste documento
 
-- **Dono de produto:** validar prazos (ex.: 3 meses), exactidão dos módulos (treino, fitoterapia, etc.) e mensagens ao paciente.
-- **Equipa técnica:** derivar *user stories* e critérios de aceitação a partir das secções 2–7.
+- **Dono de produto:** validar prazos (ex.: 3 meses), exactidão dos módulos (receitas, lista de compras, fotos, treino, suplementação, bioimpedância / ginásio, fitoterapia, etc.) e mensagens ao paciente.
+- **Equipa técnica:** derivar *user stories* e critérios de aceitação a partir das secções 2–7 e **4.1–4.4**.
 
-**Última actualização:** 2026-05-03 — alinhado com conversa sobre duplo WhatsApp, Kiwify, Cloudfy vs. VPS, e telemetria 24×7 com fecho humano no ciclo do pacote.
+**Última actualização:** 2026-05-03 — duplo WhatsApp, Kiwify, Cloudfy vs. VPS; telemetria 24×7 (receitas, compras, fotos, treino, suplementação, BIA); “AXIS” corrigido como erro de digitação; ecossistema bem-estar ancorado no clínico.
