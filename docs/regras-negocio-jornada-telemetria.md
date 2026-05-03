@@ -31,6 +31,8 @@ Documento de **alinhamento produto + técnica** para sprints seguintes. Resume a
 
 *(Kiwify = checkout / produtos digitais; a integração técnica típica será **webhook** + endpoint seguro + idempotência.)*
 
+**Implementação MVP do receptor:** ver **`docs/sprint-user-stories.md`** (US-01) — `POST /hooks/kiwify/{secret}` e tabela `integration_webhook_inbox` (`infra/sql/003_integration_webhook_inbox.sql`).
+
 ---
 
 ## 4. O que é a telemetria (definição de produto)

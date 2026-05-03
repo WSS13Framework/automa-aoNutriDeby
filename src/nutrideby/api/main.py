@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -10,7 +11,7 @@ from uuid import UUID
 
 import psycopg
 import psycopg.errors
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
@@ -20,6 +21,7 @@ from nutrideby.persist.snapshots import (
     KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
     get_external_snapshot,
 )
+from nutrideby.persist.webhook_inbox import insert_webhook_inbox
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +54,8 @@ def require_api_key(
 
 app = FastAPI(
     title="NutriDeby API leitura",
-    version="0.2.0",
-    description="Leitura do espelho Postgres (pacientes, documentos).",
+    version="0.3.0",
+    description="Leitura Postgres + hooks (ex.: Kiwify → integration_webhook_inbox).",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -182,42 +184,6 @@ def list_patients(
                 external_id=r["external_id"],
                 display_name=r.get("display_name"),
                 updated_at=r["updated_at"].isoformat() if r.get("updated_at") else "",
-            )
-        )
-    return out
-
-
-@app.get("/v1/patients/{patient_id}/chunks", dependencies=[Depends(require_api_key)])
-def list_patient_chunks(
-    patient_id: UUID,
-    settings: Annotated[Settings, Depends(get_settings)],
-    limit: int = Query(100, ge=1, le=500),
-) -> list[ChunkListItem]:
-    with _conn(settings) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT c.id, c.document_id, c.chunk_index, c.text, c.embedding_model
-                FROM chunks c
-                WHERE c.patient_id = %s
-                ORDER BY c.document_id NULLS LAST, c.chunk_index ASC
-                LIMIT %s
-                """,
-                (patient_id, limit),
-            )
-            rows = cur.fetchall()
-    out: list[ChunkListItem] = []
-    for r in rows:
-        raw = r.get("text") or ""
-        preview = raw if len(raw) <= 400 else raw[:400] + "…"
-        did = r.get("document_id")
-        out.append(
-            ChunkListItem(
-                id=str(r["id"]),
-                document_id=str(did) if did else None,
-                chunk_index=int(r["chunk_index"]),
-                text_preview=preview,
-                embedding_model=r.get("embedding_model"),
             )
         )
     return out
@@ -358,3 +324,57 @@ def list_patient_chunks(
             )
         )
     return out
+
+
+def _kiwify_path_secret_ok(settings: Settings, secret: str) -> bool:
+    expected = settings.kiwify_webhook_path_secret
+    if not (expected and str(expected).strip()):
+        return False
+    a, b = str(secret).strip(), str(expected).strip()
+    if len(a) != len(b):
+        return False
+    return secrets.compare_digest(a, b)
+
+
+@app.post("/hooks/kiwify/{secret}")
+async def kiwify_webhook(
+    secret: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """
+    Receptor Kiwify (MVP): grava JSON bruto em ``integration_webhook_inbox``.
+
+    Configura ``KIWIFY_WEBHOOK_PATH_SECRET`` e na Kiwify usa a URL
+    ``https://<teu-host>/hooks/kiwify/<mesmo_segredo>``.
+    """
+    if not (settings.kiwify_webhook_path_secret and str(settings.kiwify_webhook_path_secret).strip()):
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook Kiwify desactivado: defina KIWIFY_WEBHOOK_PATH_SECRET no .env",
+        )
+    if not _kiwify_path_secret_ok(settings, secret):
+        raise HTTPException(status_code=401, detail="Segredo do path inválido")
+    try:
+        body: Any = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corpo JSON inválido") from None
+    headers_meta: dict[str, Any] = {}
+    for key in ("user-agent", "x-forwarded-for", "content-type"):
+        if key in request.headers:
+            headers_meta[key] = request.headers[key]
+    try:
+        with psycopg.connect(settings.database_url) as conn:
+            wid = insert_webhook_inbox(
+                conn,
+                source="kiwify",
+                payload=body if isinstance(body, (dict, list)) else {"_value": body},
+                headers_meta=headers_meta,
+            )
+    except psycopg.errors.UndefinedTable as e:
+        raise HTTPException(
+            status_code=503,
+            detail="Tabela integration_webhook_inbox em falta. Aplica infra/sql/003_integration_webhook_inbox.sql",
+        ) from e
+    logger.info("kiwify webhook gravado id=%s", wid)
+    return {"received": True, "id": str(wid)}

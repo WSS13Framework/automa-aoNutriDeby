@@ -108,7 +108,11 @@ docker compose --profile api up -d api
 curl -sS http://127.0.0.1:8080/health
 curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" "http://127.0.0.1:8080/v1/patients?limit=5&source_system=dietbox"
 curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" http://127.0.0.1:8080/v1/dietbox/subscription
+# Webhook Kiwify (MVP): POST JSON; path = mesmo valor que KIWIFY_WEBHOOK_PATH_SECRET no .env
+# curl -sS -X POST http://127.0.0.1:8080/hooks/kiwify/SEU_SEGREDO -H 'Content-Type: application/json' -d '{"test":true}'
 ```
+
+Ver **`docs/sprint-user-stories.md`** (US-01) e aplicar **`infra/sql/003_integration_webhook_inbox.sql`** na base.
 
 ## Documentação
 
@@ -116,6 +120,7 @@ curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" http://127.0.0.1:8080/v1/dietbox/sub
 - **`docs/higiene-git-e-repositorio.md`** — o que **não** commitar; checklist antes do `push`; limpar ficheiros já enviados por engano
 - **`docs/checklist-mvp-e-endpoints.md`** — mapa da lista Network vs código + **checklist de testes** para a demo
 - **`docs/regras-negocio-jornada-telemetria.md`** — regras de negócio: vendas (Cloudfy) vs. telemetria (VPS), Kiwify, jornada do paciente e backlog de alto nível
+- **`docs/sprint-user-stories.md`** — *user stories* da sprint (incl. webhook Kiwify MVP)
 - `docs/execucao-plano-integracao.md` — plano GenAI / persistência
 - `docs/estrategia-dietbox-e-api-propria.md` — estratégia Dietbox + API própria
 
