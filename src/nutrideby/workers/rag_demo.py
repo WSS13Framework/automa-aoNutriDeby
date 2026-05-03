@@ -9,6 +9,8 @@ resposta via agente DigitalOcean GenAI com contexto citável.
 
 Requer ``DATABASE_URL``, ``OPENAI_API_KEY``, migração 004 e chunks com ``embedding``.
 ``--with-agent`` requer ``GENAI_AGENT_URL`` e ``GENAI_AGENT_ACCESS_KEY``.
+O pedido ao agente DO GenAI usa **só** ``role=user`` (instruções + pergunta no mesmo
+corpo): a API do agente **rejeita** ``role=system``.
 
 Personas (só com ``--with-agent``): ``--persona default`` (comportamento original),
 ``--persona clinical`` (Analista Clínico + TACO), ``--persona motor`` (motor de
@@ -108,10 +110,10 @@ def run(
         logger.warning("Sem hits — pedido ao agente só com a pergunta (sem contexto da base)")
     block = _context_block(hits) if hits else "(nenhum trecho recuperado da base)"
     system = build_system_prompt(persona, block)
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": query},
-    ]
+    # DigitalOcean GenAI Agent (OpenAI-compatible) devolve 400 se existir mensagem
+    # role=system — instruções vêm da configuração do agente ou embutidas aqui no user.
+    user_payload = f"{system}\n\n---\n\n**Pergunta do operador:**\n\n{query}"
+    messages: list[dict[str, str]] = [{"role": "user", "content": user_payload}]
     try:
         status, raw, path = chat_completion(
             str(url).strip(),

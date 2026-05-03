@@ -59,6 +59,8 @@ docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_d
 
 Em máquina local com ``DATABASE_URL`` apontando ao Postgres: ``python3 -m nutrideby.workers.rag_demo --patient-id "$PID" ...`` com o mesmo ``PID`` obtido via ``psql``.
 
+**Nota DO GenAI Agent:** se aparecer HTTP 400 *«system and developer messages are not allowed»*, o ``rag_demo`` já envia instruções + pergunta numa única mensagem ``user`` (sem ``role=system``). Actualiza o código no servidor com ``git pull``.
+
 ## 4. `src/nutrideby/config.py`
 
 Dentro da classe `Settings`, após os campos DeepSeek:
