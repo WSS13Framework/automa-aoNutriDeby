@@ -35,3 +35,6 @@ class Settings(BaseSettings):
     dietbox_bearer_token: str | None = None
     dietbox_web_base: str = "https://dietbox.me"
     dietbox_web_locale: str = "pt-BR"
+
+    # API leitura interna (Sprint 2) — se vazio, /v1/* fica sem auth (só para dev)
+    nutrideby_api_key: str | None = None

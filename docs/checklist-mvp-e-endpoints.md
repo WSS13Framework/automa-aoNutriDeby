@@ -20,6 +20,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | Item | Estado | Onde / notas |
 |------|--------|----------------|
 | Lista pacientes (C) → Postgres `patients` | **Feito** | `dietbox_sync --sync-list`; envelope `Data`; `--include-inactive` / `--inactive-only`; piloto com centenas de upserts. |
+| API leitura Sprint 2 (FastAPI) | **Feito** (mínimo) | `nutrideby.api.main:app` — `GET /health`, `/v1/patients`, `/v1/patients/{uuid}`, `/v1/patients/by-external/...`, `/v1/patients/{uuid}/documents`; `docker compose --profile api up`; `NUTRIDEBY_API_KEY` + header `X-API-Key`. |
 | Probe prontuário (D) | **Feito** (mínimo) | `--probe`; loga HTTP; **não** grava `documents`. |
 | Prontuário 200 com corpo → `documents` | **Feito** | `--sync-one`: JSON em `documents` (`doc_type=dietbox_prontuario`, `insert_document_if_new`). |
 | Prontuário 204 → marcador / política | **Feito** | `--sync-one`: texto `[Prontuário: API 204 sem corpo]` + mesmo `doc_type` (idempotente por hash). |

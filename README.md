@@ -66,6 +66,19 @@ Exemplo:
 docker compose --profile tools run --rm worker python -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 2
 ```
 
+### API leitura (Sprint 2)
+
+Serviço opcional `api` (FastAPI) em `http://127.0.0.1:8080` — lê `patients` / `documents` do Postgres.
+
+No `.env`: `NUTRIDEBY_API_KEY` (valor opaco); pedidos a `/v1/*` levam header `X-API-Key: <valor>`. Se a chave estiver vazia, `/v1/*` fica **sem** autenticação (só para desenvolvimento).
+
+```bash
+pip install -e .   # instala fastapi + uvicorn
+docker compose --profile api up -d api
+curl -sS http://127.0.0.1:8080/health
+curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" "http://127.0.0.1:8080/v1/patients?limit=5&source_system=dietbox"
+```
+
 ## Documentação
 
 - **`docs/operacao-git-docker-servidor.md`** — Git *untracked*, `git pull`, volume Docker, erro `--sync-list`, `psql` (leitura obrigatória para deploy)

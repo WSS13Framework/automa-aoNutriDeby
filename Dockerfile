@@ -13,10 +13,12 @@ ENV PYTHONUNBUFFERED=1 \
 COPY pyproject.toml README.md ./
 RUN pip install --upgrade pip && \
     pip install \
+    "fastapi>=0.115.0" \
     "playwright==1.58.0" \
     "psycopg[binary]>=3.2.0" \
     "pydantic-settings>=2.6.0" \
-    "selenium>=4.15.0"
+    "selenium>=4.15.0" \
+    "uvicorn[standard]>=0.32.0"
 
 COPY src ./src
 
