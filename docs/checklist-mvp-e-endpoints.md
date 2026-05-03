@@ -20,7 +20,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | Item | Estado | Onde / notas |
 |------|--------|----------------|
 | Lista pacientes (C) → Postgres `patients` | **Feito** | `dietbox_sync --sync-list`; envelope `Data`; `--include-inactive` / `--inactive-only`; piloto com centenas de upserts. |
-| API leitura Sprint 2 (FastAPI) | **Feito** (mínimo) | `nutrideby.api.main:app` — `GET /health`, `/v1/patients`, `/v1/patients/{uuid}`, `/v1/patients/by-external/...`, `/v1/patients/{uuid}/documents`; `docker compose --profile api up`; `NUTRIDEBY_API_KEY` + header `X-API-Key`. |
+| API leitura Sprint 2 (FastAPI) | **Feito** (mínimo) | `nutrideby.api.main:app` — `GET /health`, `/v1/patients`, `/v1/patients/{uuid}`, `/v1/patients/by-external/...`, `/v1/patients/{uuid}/documents`, **`/v1/patients/{uuid}/chunks`**; `docker compose --profile api up`; `NUTRIDEBY_API_KEY` + header `X-API-Key`. |
 | Probe prontuário (D) | **Feito** (mínimo) | `--probe`; loga HTTP; **não** grava `documents`. |
 | Prontuário em massa (D) | **Feito** (mínimo) | **`--sync-prontuario-all`** — iterar `patients` dietbox, `--prontuario-sleep-ms`, `--prontuario-limit`, retomada por run id. |
 | Prontuário 200 com corpo → `documents` | **Feito** | `--sync-one`: JSON em `documents` (`doc_type=dietbox_prontuario`, `insert_document_if_new`). |
@@ -32,7 +32,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | Site legacy (A) | **Não feito** (não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
 | `extraction_runs` (cursor, retomada) | **Parcial** | **`--sync-prontuario-all`** cria run, actualiza `cursor_state` (`last_external_id`, `processed`); **`--prontuario-resume-run-id`** retoma. Outros jobs ainda não. |
 | GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
-| Chunks / embeddings / FAISS | **Não feito** | Fora do sync actual. |
+| Chunks / embeddings / FAISS | **Parcial** | **`chunk_documents`** → tabela ``chunks`` (texto segmentado; sem ``embedding_model`` / ``faiss_id``). API ``GET /v1/patients/{uuid}/chunks``. Embeddings+FAISS: não. |
 | API própria da nutricionista | **Não feito** | Produto à parte (Sprint 2 no plano). |
 | Jobs periódicos (cron/Celery) | **Parcial** | **`dietbox_sync --smoke`** (exit **3** em 401); webhook opcional `NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL`; doc `docs/monitorizacao-smoke-cron.md`. Celery: não. |
 
@@ -136,6 +136,15 @@ python -m nutrideby.workers.dietbox_sync --sync-meta-patient SUBSTITUIR_ID_PACIE
 - [ ] `--meta` exit `0` e log com `TotalItems` / chaves coerentes.
 - [ ] Na base: `SELECT doc_type, count(*) FROM documents WHERE doc_type = 'dietbox_meta_export' GROUP BY 1;` — pelo menos um após `--sync-meta-patient` (se a API devolver itens).
 
+### Teste G — Chunks (sem embeddings)
+
+```bash
+python -m nutrideby.workers.chunk_documents --limit 5 --dry-run
+python -m nutrideby.workers.chunk_documents --limit 5
+```
+
+- [ ] Exit code `0`; na base `SELECT count(*) FROM chunks;` > 0 após a segunda linha (se existirem `documents` com texto).
+
 ---
 
 ## 4. Próximas implementações (ordem sugerida pós-MVP)
@@ -146,6 +155,7 @@ python -m nutrideby.workers.dietbox_sync --sync-meta-patient SUBSTITUIR_ID_PACIE
 4. ~~Smoke agendado (cron) + alerta 401~~ → ``--smoke`` + doc cron/webhook; plano OpenClaw/agente continua opcional.
 5. ~~`/v2/meta` → documents~~ → ``--sync-meta-patient`` / ``--sync-meta-all``.
 6. Playwright só para o que a API **não** cobrir (prontuário na UI).
+7. Embeddings + ``faiss_id`` / índice FAISS (ou vector DB) sobre ``chunks``.
 
 ---
 

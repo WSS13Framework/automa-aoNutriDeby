@@ -68,6 +68,18 @@ python -m nutrideby.workers.dietbox_sync --sync-meta-all --meta-all-limit 10 --m
 
 Cron e webhook: **`docs/monitorizacao-smoke-cron.md`**; exemplo de script: **`scripts/smoke-dietbox.example.sh`**.
 
+### Chunks (texto → Postgres, sem embeddings)
+
+Depois de teres `documents` (prontuário, meta, etc.):
+
+```bash
+python -m nutrideby.workers.chunk_documents --limit 30
+python -m nutrideby.workers.chunk_documents --doc-type dietbox_prontuario --limit 50 --max-chars 1200
+docker compose --profile tools run --rm worker python -m nutrideby.workers.chunk_documents --limit 20
+```
+
+API: `GET /v1/patients/{uuid}/chunks` (mesmo `X-API-Key`). Embeddings / FAISS ficam para uma fase seguinte.
+
 Se no servidor der `unrecognized arguments: --sync-list`, o código está desactualizado: actualiza o repo e corre `docker compose build worker`.
 
 Aumenta `--max-pages` para sincronizar mais páginas. Por omissão envia `IsActive=true`. `--include-inactive` omite o parâmetro (todos). `--inactive-only` envia `IsActive=false` (como no DevTools quando a lista são inactivos).

@@ -95,6 +95,14 @@ class DocumentItem(BaseModel):
     content_preview: str
 
 
+class ChunkListItem(BaseModel):
+    id: str
+    document_id: str | None
+    chunk_index: int
+    text_preview: str
+    embedding_model: str | None = None
+
+
 def _conn(settings: Settings) -> psycopg.Connection:
     return psycopg.connect(settings.database_url, row_factory=dict_row)
 
@@ -174,6 +182,42 @@ def list_patients(
                 external_id=r["external_id"],
                 display_name=r.get("display_name"),
                 updated_at=r["updated_at"].isoformat() if r.get("updated_at") else "",
+            )
+        )
+    return out
+
+
+@app.get("/v1/patients/{patient_id}/chunks", dependencies=[Depends(require_api_key)])
+def list_patient_chunks(
+    patient_id: UUID,
+    settings: Annotated[Settings, Depends(get_settings)],
+    limit: int = Query(100, ge=1, le=500),
+) -> list[ChunkListItem]:
+    with _conn(settings) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT c.id, c.document_id, c.chunk_index, c.text, c.embedding_model
+                FROM chunks c
+                WHERE c.patient_id = %s
+                ORDER BY c.document_id NULLS LAST, c.chunk_index ASC
+                LIMIT %s
+                """,
+                (patient_id, limit),
+            )
+            rows = cur.fetchall()
+    out: list[ChunkListItem] = []
+    for r in rows:
+        raw = r.get("text") or ""
+        preview = raw if len(raw) <= 400 else raw[:400] + "…"
+        did = r.get("document_id")
+        out.append(
+            ChunkListItem(
+                id=str(r["id"]),
+                document_id=str(did) if did else None,
+                chunk_index=int(r["chunk_index"]),
+                text_preview=preview,
+                embedding_model=r.get("embedding_model"),
             )
         )
     return out
@@ -275,6 +319,42 @@ def list_documents(
                 doc_type=r["doc_type"],
                 collected_at=r["collected_at"].isoformat() if r.get("collected_at") else "",
                 content_preview=preview,
+            )
+        )
+    return out
+
+
+@app.get("/v1/patients/{patient_id}/chunks", dependencies=[Depends(require_api_key)])
+def list_patient_chunks(
+    patient_id: UUID,
+    settings: Annotated[Settings, Depends(get_settings)],
+    limit: int = Query(100, ge=1, le=500),
+) -> list[ChunkListItem]:
+    with _conn(settings) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT c.id, c.document_id, c.chunk_index, c.text, c.embedding_model
+                FROM chunks c
+                WHERE c.patient_id = %s
+                ORDER BY c.document_id NULLS LAST, c.chunk_index ASC
+                LIMIT %s
+                """,
+                (patient_id, limit),
+            )
+            rows = cur.fetchall()
+    out: list[ChunkListItem] = []
+    for r in rows:
+        raw = r.get("text") or ""
+        preview = raw if len(raw) <= 400 else raw[:400] + "…"
+        did = r.get("document_id")
+        out.append(
+            ChunkListItem(
+                id=str(r["id"]),
+                document_id=str(did) if did else None,
+                chunk_index=int(r["chunk_index"]),
+                text_preview=preview,
+                embedding_model=r.get("embedding_model"),
             )
         )
     return out

@@ -60,3 +60,26 @@ def insert_document_if_new(
         )
         row = cur.fetchone()
         return row[0] if row else None
+
+
+def replace_document_chunks(
+    conn: psycopg.Connection,
+    *,
+    patient_id: uuid.UUID,
+    document_id: uuid.UUID,
+    texts: list[str],
+    embedding_model: str | None = None,
+) -> int:
+    """Remove chunks antigos do documento e insere novos índices 0..n-1."""
+    clean = [t.strip() for t in texts if t and t.strip()]
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
+        for idx, t in enumerate(clean):
+            cur.execute(
+                """
+                INSERT INTO chunks (patient_id, document_id, chunk_index, text, embedding_model)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (patient_id, document_id, idx, t, embedding_model),
+            )
+    return len(clean)
