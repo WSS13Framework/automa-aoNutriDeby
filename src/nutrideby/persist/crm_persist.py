@@ -13,6 +13,18 @@ from psycopg.types.json import Json
 logger = logging.getLogger(__name__)
 
 
+def _row_uuid(row: object | None) -> uuid.UUID | None:
+    """Primeira coluna (``id``) com ``dict_row`` ou tupla."""
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        v = row.get("id")
+        if v is None:
+            return None
+        return v if isinstance(v, uuid.UUID) else uuid.UUID(str(v))
+    return row[0]  # type: ignore[index]
+
+
 def upsert_patient(
     conn: psycopg.Connection,
     *,
@@ -36,7 +48,9 @@ def upsert_patient(
         )
         row = cur.fetchone()
         assert row is not None
-        return row[0]
+        rid = _row_uuid(row)
+        assert rid is not None
+        return rid
 
 
 def insert_document_if_new(
@@ -46,20 +60,45 @@ def insert_document_if_new(
     doc_type: str,
     content_text: str,
     source_ref: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> uuid.UUID | None:
+    """Insere documento se o par (patient_id, doc_type, hash do texto) for novo. Requer coluna ``metadata`` (migração 002)."""
+    sha = hashlib.sha256(content_text.encode("utf-8")).hexdigest()
+    meta = metadata if metadata else {}
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO documents (patient_id, doc_type, content_text, content_sha256, source_ref, metadata)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (patient_id, doc_type, content_sha256) DO NOTHING
+            RETURNING id
+            """,
+            (patient_id, doc_type, content_text, sha, source_ref, Json(meta)),
+        )
+        row = cur.fetchone()
+        return _row_uuid(row)
+
+
+def find_document_id_by_content_hash(
+    conn: psycopg.Connection,
+    *,
+    patient_id: uuid.UUID,
+    doc_type: str,
+    content_text: str,
+) -> uuid.UUID | None:
+    """Devolve ``id`` do documento existente com o mesmo hash de conteúdo, ou ``None``."""
     sha = hashlib.sha256(content_text.encode("utf-8")).hexdigest()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO documents (patient_id, doc_type, content_text, content_sha256, source_ref)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (patient_id, doc_type, content_sha256) DO NOTHING
-            RETURNING id
+            SELECT id FROM documents
+            WHERE patient_id = %s AND doc_type = %s AND content_sha256 = %s
+            LIMIT 1
             """,
-            (patient_id, doc_type, content_text, sha, source_ref),
+            (patient_id, doc_type, sha),
         )
         row = cur.fetchone()
-        return row[0] if row else None
+        return _row_uuid(row)
 
 
 def replace_document_chunks(

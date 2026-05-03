@@ -141,6 +141,9 @@ docker compose --profile api up -d api
 curl -sS http://127.0.0.1:8081/health
 curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" "http://127.0.0.1:8081/v1/patients?limit=5&source_system=dietbox"
 curl -sS -H "X-API-Key: $NUTRIDEBY_API_KEY" http://127.0.0.1:8081/v1/dietbox/subscription
+# Ingestão texto (ex.: análises): POST …/documents → depois chunk_documents + embed_chunks → POST …/retrieve
+# curl -sS -X POST "http://127.0.0.1:8081/v1/patients/SUBSTITUIR_UUID/documents" -H "X-API-Key: $NUTRIDEBY_API_KEY" \
+#   -H "Content-Type: application/json" -d '{"content_text":"Hb 13 g/dL\nGlicemia 92 mg/dL","metadata":{"discipline":"laboratory"}}'
 # Webhook Kiwify (MVP): POST JSON; path = mesmo valor que KIWIFY_WEBHOOK_PATH_SECRET no .env
 # curl -sS -X POST http://127.0.0.1:8081/hooks/kiwify/SEU_SEGREDO -H 'Content-Type: application/json' -d '{"test":true}'
 ```

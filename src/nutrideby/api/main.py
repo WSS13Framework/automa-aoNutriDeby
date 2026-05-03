@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from nutrideby.config import Settings
 from nutrideby.rag.patient_retrieve import patient_retrieve
+from nutrideby.persist.crm_persist import find_document_id_by_content_hash, insert_document_if_new
 from nutrideby.persist.snapshots import (
     KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
     get_external_snapshot,
@@ -55,8 +56,8 @@ def require_api_key(
 
 app = FastAPI(
     title="NutriDeby API leitura",
-    version="0.4.1",
-    description="Leitura Postgres, RAG retrieval (pgvector) e hooks (ex.: Kiwify).",
+    version="0.4.2",
+    description="Leitura Postgres, ingestão de documentos (texto), RAG retrieval (pgvector) e hooks (ex.: Kiwify).",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -96,6 +97,32 @@ class DocumentItem(BaseModel):
     doc_type: str
     collected_at: str
     content_preview: str
+
+
+class CreateDocumentRequest(BaseModel):
+    """Texto bruto (ex.: OCR de análises). Depois: ``chunk_documents`` + ``embed_chunks`` + ``/retrieve``."""
+
+    content_text: str = Field(..., min_length=1, max_length=500_000)
+    doc_type: str = Field(
+        default="lab_report",
+        min_length=1,
+        max_length=200,
+        description="Por omissão lab_report; usar outro valor para outros fluxos.",
+    )
+    source_ref: str | None = Field(default=None, max_length=2000)
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description='Ex.: {"discipline": "laboratory", "source": "patient_upload"}',
+    )
+
+
+class CreateDocumentResponse(BaseModel):
+    document_id: str
+    inserted: bool
+    hint: str = (
+        "Para RAG: python3 -m nutrideby.workers.chunk_documents --patient-id <uuid> "
+        "--doc-type <tipo>; depois embed_chunks."
+    )
 
 
 class ChunkListItem(BaseModel):
@@ -407,6 +434,58 @@ def list_documents(
             )
         )
     return out
+
+
+@app.post(
+    "/v1/patients/{patient_id}/documents",
+    dependencies=[Depends(require_api_key)],
+    response_model=CreateDocumentResponse,
+)
+def create_patient_document(
+    patient_id: UUID,
+    body: CreateDocumentRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> CreateDocumentResponse:
+    """
+    Cria documento de texto para o paciente (idempotente pelo hash do conteúdo).
+
+    Requer migração ``002_documents_metadata.sql`` (coluna ``metadata`` em ``documents``).
+    Não corre chunking/embeddings automaticamente.
+    """
+    doc_type = body.doc_type.strip()
+    with _conn(settings) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM patients WHERE id = %s", (patient_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Paciente não encontrado")
+        try:
+            new_id = insert_document_if_new(
+                conn,
+                patient_id=patient_id,
+                doc_type=doc_type,
+                content_text=body.content_text,
+                source_ref=body.source_ref.strip() if body.source_ref else None,
+                metadata=body.metadata,
+            )
+        except psycopg.errors.UndefinedColumn as e:
+            raise HTTPException(
+                status_code=503,
+                detail="Coluna metadata em falta em documents. Aplica infra/sql/002_documents_metadata.sql",
+            ) from e
+        if new_id is not None:
+            return CreateDocumentResponse(document_id=str(new_id), inserted=True)
+        existing = find_document_id_by_content_hash(
+            conn,
+            patient_id=patient_id,
+            doc_type=doc_type,
+            content_text=body.content_text,
+        )
+        if existing is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Documento duplicado mas id não encontrado (estado inconsistente).",
+            )
+        return CreateDocumentResponse(document_id=str(existing), inserted=False)
 
 
 @app.get("/v1/patients/{patient_id}/chunks", dependencies=[Depends(require_api_key)])
