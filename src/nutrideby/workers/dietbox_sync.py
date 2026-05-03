@@ -1,20 +1,20 @@
 """
 Conector Dietbox (API v2) — Sprint 1 / MVP.
 
-  python -m nutrideby.workers.dietbox_sync --probe PACIENTE_ID
-  python -m nutrideby.workers.dietbox_sync --sync-one PACIENTE_ID   # prontuário → documents
-  python -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
-  python -m nutrideby.workers.dietbox_sync --meta PACIENTE_ID --meta-take 50
-  python -m nutrideby.workers.dietbox_sync --sync-meta-patient PACIENTE_ID [--meta-max-pages 100]
-  python -m nutrideby.workers.dietbox_sync --sync-meta-all [--meta-all-limit 20] [--meta-all-sleep-ms 350]
-  python -m nutrideby.workers.dietbox_sync --formula-imc 28.5 --formula-idade 42
-  python -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 4
-  python -m nutrideby.workers.dietbox_sync --feed-list
-  python -m nutrideby.workers.dietbox_sync --subscription
-  python -m nutrideby.workers.dietbox_sync --sync-subscription
-  python -m nutrideby.workers.dietbox_sync --sync-prontuario-all [--prontuario-limit N] [--prontuario-sleep-ms 250]
-  python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID
-  python -m nutrideby.workers.dietbox_sync --smoke   # cron: JWT; exit 3 em HTTP 401
+  python3 -m nutrideby.workers.dietbox_sync --probe PACIENTE_ID   # no Ubuntu host; no Docker: … worker python -m …
+  python3 -m nutrideby.workers.dietbox_sync --sync-one PACIENTE_ID   # prontuário → documents
+  python3 -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
+  python3 -m nutrideby.workers.dietbox_sync --meta PACIENTE_ID --meta-take 50
+  python3 -m nutrideby.workers.dietbox_sync --sync-meta-patient PACIENTE_ID [--meta-max-pages 100]
+  python3 -m nutrideby.workers.dietbox_sync --sync-meta-all [--meta-all-limit 20] [--meta-all-sleep-ms 350]
+  python3 -m nutrideby.workers.dietbox_sync --formula-imc 28.5 --formula-idade 42
+  python3 -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 4
+  python3 -m nutrideby.workers.dietbox_sync --feed-list
+  python3 -m nutrideby.workers.dietbox_sync --subscription
+  python3 -m nutrideby.workers.dietbox_sync --sync-subscription
+  python3 -m nutrideby.workers.dietbox_sync --sync-prontuario-all [--prontuario-limit N] [--prontuario-sleep-ms 250]
+  python3 -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID
+  python3 -m nutrideby.workers.dietbox_sync --smoke   # cron: JWT; exit 3 em HTTP 401
 
 Requer .env: DATABASE_URL, DIETBOX_BEARER_TOKEN; opcional DIETBOX_API_BASE, DIETBOX_WEB_BASE.
 Tabela ``external_snapshots``: ``infra/sql/002_external_snapshots.sql`` (subscription persistida).

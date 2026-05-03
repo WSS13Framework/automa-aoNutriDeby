@@ -5,11 +5,11 @@ Implementação real: login, paginação de pacientes, abertura de prontuário e
 persistência em `patients` / `documents` (ver infra/sql).
 
 Uso:
-  python -m nutrideby.workers.crm_extract --dry-run
-  python -m nutrideby.workers.crm_extract --check-db
-  python -m nutrideby.workers.crm_extract --check-agent
-  python -m nutrideby.workers.crm_extract --import-csv data/export.csv
-  python -m nutrideby.workers.crm_extract --import-json data/exemplo_import.json
+  python3 -m nutrideby.workers.crm_extract --dry-run
+  python3 -m nutrideby.workers.crm_extract --check-db
+  python3 -m nutrideby.workers.crm_extract --check-agent
+  python3 -m nutrideby.workers.crm_extract --import-csv data/export.csv
+  python3 -m nutrideby.workers.crm_extract --import-json data/exemplo_import.json
 """
 
 from __future__ import annotations

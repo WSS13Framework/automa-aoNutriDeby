@@ -5,7 +5,8 @@ Objetivo: correr de hora em hora (ou 2×/dia) um pedido **mínimo** à API Dietb
 ## Comando
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --smoke
+# No host Ubuntu sem o meta-pacote ``python``: usa ``python3`` ou Docker (recomendado).
+python3 -m nutrideby.workers.dietbox_sync --smoke
 ```
 
 Requer `DIETBOX_BEARER_TOKEN` (e opcionalmente `DIETBOX_API_BASE`) no `.env` — igual aos outros comandos Dietbox.
@@ -44,7 +45,7 @@ Ou script wrapper: ver `scripts/smoke-dietbox.example.sh`.
 ## Alerta só em 401 (exit 3)
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --smoke || {
+python3 -m nutrideby.workers.dietbox_sync --smoke || {
   c=$?
   [ "$c" -eq 3 ] && curl -fsS -X POST -H 'Content-Type: application/json' \
     -d '{"text":"Dietbox JWT 401"}' 'https://hooks.slack.com/services/...' || true

@@ -8,10 +8,12 @@ Pipeline: **ingestão** (Dietbox API v2 ou ficheiros) → **Postgres** (`patient
 - PostgreSQL com schema aplicado: `infra/sql/001_initial.sql`
 - Ficheiro `.env` (usa `.env.example` como modelo)
 
+**Servidor Ubuntu (shell no host, fora do Docker):** muitas imagens mínimas só têm o binário `python3`. Usa `python3 -m nutrideby...` no host, ou (recomendado em produção) **`docker compose --profile tools run --rm worker python -m ...`** — dentro do container o comando `python` existe. Opcional no host: `sudo apt install python-is-python3`.
+
 ## Instalação
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
@@ -25,7 +27,7 @@ Garante `DATABASE_URL` no `.env` e aplica o SQL inicial na base (`infra/sql/001_
 ### 2) Importação offline (sem Dietbox)
 
 ```bash
-python -m nutrideby.workers.data_import --json data/exemplo_import.json
+python3 -m nutrideby.workers.data_import --json data/exemplo_import.json
 ```
 
 ### 3) Sincronização Dietbox (API)
@@ -34,36 +36,36 @@ No `.env`: `DIETBOX_BEARER_TOKEN` (JWT depois de `Bearer `) e opcionalmente `DIE
 
 ```bash
 # Conectividade + prontuário (204 sem corpo é OK)
-python -m nutrideby.workers.dietbox_sync --probe ID_PACIENTE
+python3 -m nutrideby.workers.dietbox_sync --probe ID_PACIENTE
 
 # Prontuário de um paciente → documents (+ paciente mínimo)
-python -m nutrideby.workers.dietbox_sync --sync-one ID_PACIENTE
+python3 -m nutrideby.workers.dietbox_sync --sync-one ID_PACIENTE
 
 # Só ficha do paciente (GET /v2/paciente/{id} → patients, sem prontuário)
-python -m nutrideby.workers.dietbox_sync --sync-patient ID_PACIENTE
+python3 -m nutrideby.workers.dietbox_sync --sync-patient ID_PACIENTE
 
 # Lista de pacientes → Postgres (source_system=dietbox)
-python -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
+python3 -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
 
 # Mesmo filtro que o browser com IsActive=false (só inactivos)
-python -m nutrideby.workers.dietbox_sync --sync-list --inactive-only --take 10 --max-pages 1
+python3 -m nutrideby.workers.dietbox_sync --sync-list --inactive-only --take 10 --max-pages 1
 
 # SituacaoIMC em lote (pacientes já em Postgres; GET paciente + fórmula por defeito)
-python -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 2
+python3 -m nutrideby.workers.dietbox_sync --sync-formula-imc-all --formula-workers 2
 
 # Subscription → tabela external_snapshots (aplica antes infra/sql/002_external_snapshots.sql se a base já existia)
-python -m nutrideby.workers.dietbox_sync --sync-subscription
+python3 -m nutrideby.workers.dietbox_sync --sync-subscription
 
 # Prontuário em massa (sequencial; extraction_runs para auditoria / retomada)
-python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-limit 50 --prontuario-sleep-ms 300
-python -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID_DA_LINHA_extraction_runs
+python3 -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-limit 50 --prontuario-sleep-ms 300
+python3 -m nutrideby.workers.dietbox_sync --sync-prontuario-all --prontuario-resume-run-id UUID_DA_LINHA_extraction_runs
 
 # Smoke para cron (JWT): exit 0=OK, 3=HTTP 401; opcional NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL
-python -m nutrideby.workers.dietbox_sync --smoke
+python3 -m nutrideby.workers.dietbox_sync --smoke
 
 # Linha do tempo /v2/meta → documents (JSON agregado; --meta-max-pages limita paginação)
-python -m nutrideby.workers.dietbox_sync --sync-meta-patient ID_PACIENTE --meta-take 50 --meta-max-pages 30
-python -m nutrideby.workers.dietbox_sync --sync-meta-all --meta-all-limit 10 --meta-all-sleep-ms 400
+python3 -m nutrideby.workers.dietbox_sync --sync-meta-patient ID_PACIENTE --meta-take 50 --meta-max-pages 30
+python3 -m nutrideby.workers.dietbox_sync --sync-meta-all --meta-all-limit 10 --meta-all-sleep-ms 400
 ```
 
 Cron e webhook: **`docs/monitorizacao-smoke-cron.md`**; exemplo de script: **`scripts/smoke-dietbox.example.sh`**.
@@ -73,8 +75,8 @@ Cron e webhook: **`docs/monitorizacao-smoke-cron.md`**; exemplo de script: **`sc
 Depois de teres `documents` (prontuário, meta, etc.):
 
 ```bash
-python -m nutrideby.workers.chunk_documents --limit 30
-python -m nutrideby.workers.chunk_documents --doc-type dietbox_prontuario --limit 50 --max-chars 1200
+python3 -m nutrideby.workers.chunk_documents --limit 30
+python3 -m nutrideby.workers.chunk_documents --doc-type dietbox_prontuario --limit 50 --max-chars 1200
 docker compose --profile tools run --rm worker python -m nutrideby.workers.chunk_documents --limit 20
 ```
 

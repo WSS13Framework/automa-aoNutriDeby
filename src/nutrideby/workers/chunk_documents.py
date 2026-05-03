@@ -1,9 +1,9 @@
 """
 Segmenta ``documents.content_text`` na tabela ``chunks`` (sem embeddings / FAISS).
 
-  python -m nutrideby.workers.chunk_documents --limit 20
-  python -m nutrideby.workers.chunk_documents --doc-type dietbox_prontuario --limit 50
-  python -m nutrideby.workers.chunk_documents --patient-id UUID --force
+  python3 -m nutrideby.workers.chunk_documents --limit 20
+  python3 -m nutrideby.workers.chunk_documents --doc-type dietbox_prontuario --limit 50
+  python3 -m nutrideby.workers.chunk_documents --patient-id UUID --force
 
 Requer ``DATABASE_URL``. Por omissão ignora documentos que já têm linhas em ``chunks``
 (a menos que ``--force``).

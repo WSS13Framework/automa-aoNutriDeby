@@ -39,6 +39,8 @@ Este documento explica **porque** o servidor às vezes corre código “velho”
 | 4 | Servidor | Se **há** volume `.:/app` → **não** é obrigatório rebuild só por `.py`. Se **não** há volume → `docker compose build --no-cache worker`. |
 | 5 | Servidor | Correr o worker: `docker compose --profile tools run --rm worker python -m ...` |
 
+**`python` vs `python3` no servidor:** no *host* Ubuntu minimal (sem `python-is-python3`), o comando `python` pode não existir — usa **`python3 -m ...`** com `PYTHONPATH` / venv correctos, ou (recomendado) **sempre** o Docker na linha 5, onde o container expõe `python`.
+
 ## 4. Variáveis de ambiente (Dietbox, Postgres)
 
 - Segredos no **`.env`** no servidor; **nunca** commit.

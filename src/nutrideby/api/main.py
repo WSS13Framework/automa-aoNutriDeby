@@ -131,7 +131,7 @@ def dietbox_subscription_snapshot(
     if not row:
         raise HTTPException(
             status_code=404,
-            detail="Sem snapshot; correr: python -m nutrideby.workers.dietbox_sync --sync-subscription",
+            detail="Sem snapshot; correr: python3 -m nutrideby.workers.dietbox_sync --sync-subscription (ou via Docker: worker python -m …)",
         )
     payload, fetched_at, http_status = row
     return {

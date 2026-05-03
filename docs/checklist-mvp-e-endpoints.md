@@ -31,7 +31,7 @@ Este documento alinha a **lista de pedidos** que descobriste > Network com o **c
 | `/v2/meta` paciente | **Feito** (mínimo) | `--meta` (probe); **`--sync-meta-patient`** / **`--sync-meta-all`** → `documents` (`doc_type=dietbox_meta_export`, JSON agregado por paciente; idempotente por hash). |
 | Site legacy (A) | **Não feito** (não prioritário) | Preferir API; Playwright só se a doc §9 exigir. |
 | `extraction_runs` (cursor, retomada) | **Parcial** | **`--sync-prontuario-all`** cria run, actualiza `cursor_state` (`last_external_id`, `processed`); **`--prontuario-resume-run-id`** retoma. Outros jobs ainda não. |
-| GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
+| GenAI / `--check-agent` | **Feito** (mínimo) | `src/nutrideby/clients/genai_agent.py`; `python3 -m nutrideby.workers.crm_extract --check-agent` (requer `GENAI_*` no `.env`). |
 | Chunks / embeddings / FAISS | **Parcial** | **`chunk_documents`** → tabela ``chunks`` (texto segmentado; sem ``embedding_model`` / ``faiss_id``). API ``GET /v1/patients/{uuid}/chunks``. Embeddings+FAISS: não. |
 | API própria da nutricionista | **Não feito** | Produto à parte (Sprint 2 no plano). |
 | Jobs periódicos (cron/Celery) | **Parcial** | **`dietbox_sync --smoke`** (exit **3** em 401); webhook opcional `NUTRIDEBY_SMOKE_ALERT_WEBHOOK_URL`; doc `docs/monitorizacao-smoke-cron.md`. Celery: não. |
@@ -58,7 +58,7 @@ Marca ✅ quando passar. **Não** colar tokens nos relatórios.
 ### Teste A — Importação offline (sem Dietbox)
 
 ```bash
-python -m nutrideby.workers.data_import --json data/exemplo_import.json
+python3 -m nutrideby.workers.data_import --json data/exemplo_import.json
 ```
 
 - [ ] Exit code `0`.
@@ -68,7 +68,7 @@ python -m nutrideby.workers.data_import --json data/exemplo_import.json
 ### Teste B — Conectividade API + prontuário
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --probe SUBSTITUIR_ID_PACIENTE
+python3 -m nutrideby.workers.dietbox_sync --probe SUBSTITUIR_ID_PACIENTE
 ```
 
 - [ ] Exit code `0` se HTTP for `200` ou `204`.
@@ -82,19 +82,19 @@ python -m nutrideby.workers.dietbox_sync --probe SUBSTITUIR_ID_PACIENTE
 **Prontuário de um paciente** (grava `documents` + paciente; 204 vira marcador):
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --sync-one SUBSTITUIR_ID_PACIENTE
+python3 -m nutrideby.workers.dietbox_sync --sync-one SUBSTITUIR_ID_PACIENTE
 ```
 
 **Só metadados do paciente** (GET `/v2/paciente/{id}` → `patients`, sem prontuário):
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --sync-patient SUBSTITUIR_ID_PACIENTE
+python3 -m nutrideby.workers.dietbox_sync --sync-patient SUBSTITUIR_ID_PACIENTE
 ```
 
 Lista paginada:
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
+python3 -m nutrideby.workers.dietbox_sync --sync-list --take 10 --max-pages 1
 ```
 
 - [ ] Exit code `0`.
@@ -121,7 +121,7 @@ docker compose --profile tools run --rm worker python -m nutrideby.workers.dietb
 ### Teste E — Lista completa (quando C estiver OK)
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
+python3 -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 ```
 
 - [ ] Contagem na base cresce de forma coerente; sem erros HTTP `429` (rate limit).
@@ -129,8 +129,8 @@ python -m nutrideby.workers.dietbox_sync --sync-list --take 50 --max-pages 20
 ### Teste F — `/v2/meta` → `documents`
 
 ```bash
-python -m nutrideby.workers.dietbox_sync --meta SUBSTITUIR_ID_PACIENTE --meta-take 20
-python -m nutrideby.workers.dietbox_sync --sync-meta-patient SUBSTITUIR_ID_PACIENTE --meta-max-pages 5
+python3 -m nutrideby.workers.dietbox_sync --meta SUBSTITUIR_ID_PACIENTE --meta-take 20
+python3 -m nutrideby.workers.dietbox_sync --sync-meta-patient SUBSTITUIR_ID_PACIENTE --meta-max-pages 5
 ```
 
 - [ ] `--meta` exit `0` e log com `TotalItems` / chaves coerentes.
@@ -139,8 +139,8 @@ python -m nutrideby.workers.dietbox_sync --sync-meta-patient SUBSTITUIR_ID_PACIE
 ### Teste G — Chunks (sem embeddings)
 
 ```bash
-python -m nutrideby.workers.chunk_documents --limit 5 --dry-run
-python -m nutrideby.workers.chunk_documents --limit 5
+python3 -m nutrideby.workers.chunk_documents --limit 5 --dry-run
+python3 -m nutrideby.workers.chunk_documents --limit 5
 ```
 
 - [ ] Exit code `0`; na base `SELECT count(*) FROM chunks;` > 0 após a segunda linha (se existirem `documents` com texto).
