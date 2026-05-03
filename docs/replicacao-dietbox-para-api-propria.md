@@ -61,7 +61,41 @@ Evitar `v2//` (dois slashes). O worker usa `DIETBOX_API_BASE` + paths em `nutrid
 
 ---
 
-## 6. Relação com outros docs
+## 6. Procedimento “janela única” — tirar o máximo da Dietbox para a vossa base
+
+Objectivo: com **um JWT válido**, correr **em sequência** o que já está implementado, para **Postgres** (`patients`, `documents`, `external_snapshots`). Depois **RAG**: `chunk_documents` → `embed_chunks`.
+
+**Ordem sugerida** (ajusta `take` / `max-pages` / limites ao volume real; usa `--prontuario-sleep-ms` / `--meta-all-sleep-ms` para não martelar a API):
+
+| # | Comando (exemplo) | Grava em |
+|---|-------------------|----------|
+| 1 | `dietbox_sync --sync-list --take 50 --max-pages 50` (+ `--include-inactive` se precisares de todos) | `patients` |
+| 2 | `dietbox_sync --sync-subscription` | `external_snapshots` |
+| 3 | `dietbox_sync --sync-prontuario-all --prontuario-sleep-ms 300` (+ `--prontuario-limit N` para teste) | `documents` (`dietbox_prontuario`) |
+| 4 | `dietbox_sync --sync-meta-all --meta-all-limit 0 --meta-max-pages 50 --meta-all-sleep-ms 400` | `documents` (`dietbox_meta_export`) |
+| 5 | Opcional: `dietbox_sync --sync-patient ID` em loop ou script se quiseres **refrescar metadata** de todos (a lista já traz mínimo) | `patients` |
+| 6 | Opcional / frágil: `dietbox_sync --sync-formula-imc-all --formula-workers 2` (site **MVC** `dietbox.me`, mesmo Bearer) | `documents` (tipo fórmula IMC) |
+| 7 | Opcional: `dietbox_sync --feed-list` (só **probe**, não persiste feed completo) | logs |
+| 8 | `chunk_documents` (sem `--force` na primeira vez; com `--force` se reprocessares texto) | `chunks` |
+| 9 | `embed_chunks` (lotes) | `chunks.embedding` |
+
+**Retomar prontuário** se cair a meio: `--sync-prontuario-all --prontuario-resume-run-id UUID` (ver logs da run).
+
+---
+
+## 7. O que **ainda não** está no código (agendas, macros, “tudo”)
+
+Coisas como **agendas**, **macros**, **módulos** que só aparecem na UI podem **não** ter equivalente em `/v2/...` já usado. O procedimento é:
+
+1. Com o profissional logado, **DevTools → Network** ao abrir cada ecrã (agenda, macros, etc.).
+2. Anotar **URL, método, query, corpo JSON** e se a resposta é útil para RAG.
+3. Se for API JSON estável: **nova função** em `nutrideby.clients.dietbox_api` + job em `dietbox_sync` + `doc_type` novo em `documents` (e depois chunk/embed).
+
+Até isso existir, o “tudo” = **tudo o que a tabela da secção 6** cobre + o que descobrires em rede.
+
+---
+
+## 8. Relação com outros docs
 
 - Checklist técnico: `docs/checklist-mvp-e-endpoints.md`
 - Plano negócio / sprints: `docs/PLANO-NEGOCIO-E-SPRINTS.md`
