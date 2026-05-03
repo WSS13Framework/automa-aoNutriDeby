@@ -16,8 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
-from nutrideby.clients.openai_embeddings import embed_single_query, format_vector_for_pg
 from nutrideby.config import Settings
+from nutrideby.rag.patient_retrieve import patient_retrieve
 from nutrideby.persist.snapshots import (
     KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
     get_external_snapshot,
@@ -55,7 +55,7 @@ def require_api_key(
 
 app = FastAPI(
     title="NutriDeby API leitura",
-    version="0.4.0",
+    version="0.4.1",
     description="Leitura Postgres, RAG retrieval (pgvector) e hooks (ex.: Kiwify).",
     lifespan=lifespan,
 )
@@ -361,38 +361,26 @@ def retrieve_chunks(
     Busca semântica por paciente: embedding da ``query`` + ordem por distância coseno (pgvector).
     Requer migração 004, chunks com ``embedding`` preenchido (``embed_chunks``) e ``OPENAI_API_KEY``.
     """
-    key = settings.openai_api_key
-    if not (key and str(key).strip()):
-        raise HTTPException(
-            status_code=503,
-            detail="Embeddings desactivados: defina OPENAI_API_KEY no .env",
-        )
-    model = settings.openai_embedding_model
-    try:
-        vec = embed_single_query(
-            api_base=settings.openai_api_base,
-            api_key=str(key),
-            model=model,
-            text=body.query,
-        )
-    except Exception as e:
-        logger.warning("retrieve: falha ao embeddar query: %s", e)
-        raise HTTPException(status_code=502, detail=f"Falha ao gerar embedding da query: {e!s}") from e
-    lit = format_vector_for_pg(vec)
-    sql = """
-        SELECT c.id, c.document_id, c.chunk_index, c.text,
-               (c.embedding <=> %s::vector)::float AS distance
-        FROM chunks c
-        WHERE c.patient_id = %s
-          AND c.embedding IS NOT NULL
-        ORDER BY c.embedding <=> %s::vector
-        LIMIT %s
-    """
     try:
         with _conn(settings) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (lit, patient_id, lit, body.k))
-                rows = cur.fetchall()
+            model, row_dicts = patient_retrieve(
+                conn,
+                patient_id=patient_id,
+                query=body.query,
+                k=body.k,
+                settings=settings,
+            )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e) or "Embeddings desactivados: defina OPENAI_API_KEY no .env",
+        ) from e
+    except RuntimeError as e:
+        logger.warning("retrieve: falha ao embeddar query: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Falha ao gerar embedding da query: {e!s}",
+        ) from e
     except psycopg.errors.UndefinedColumn:
         raise HTTPException(
             status_code=503,
@@ -403,25 +391,17 @@ def retrieve_chunks(
             status_code=503,
             detail="Extensão pgvector em falta ou operador inválido. Usa imagem com pgvector e migração 004.",
         ) from None
-    hits: list[RetrieveHit] = []
-    for r in rows:
-        dist = float(r["distance"] or 0.0)
-        # Monotónico: maior = mais próximo (distância coseno pgvector)
-        score = 1.0 / (1.0 + dist) if dist >= 0 else 0.0
-        raw = r.get("text") or ""
-        if len(raw) > 8000:
-            raw = raw[:8000] + "…"
-        did = r.get("document_id")
-        hits.append(
-            RetrieveHit(
-                chunk_id=str(r["id"]),
-                document_id=str(did) if did else None,
-                chunk_index=int(r["chunk_index"]),
-                distance=dist,
-                score=score,
-                text=raw,
-            )
+    hits = [
+        RetrieveHit(
+            chunk_id=r["chunk_id"],
+            document_id=r["document_id"],
+            chunk_index=r["chunk_index"],
+            distance=r["distance"],
+            score=r["score"],
+            text=r["text"],
         )
+        for r in row_dicts
+    ]
     return RetrieveResponse(query=body.query, embedding_model=model, hits=hits)
 
 

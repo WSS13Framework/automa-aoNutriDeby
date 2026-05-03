@@ -39,7 +39,7 @@ Complementa (não substitui) **`docs/regras-negocio-jornada-telemetria.md`**, **
 | Chunks de qualidade | Política de chunking alinhada a `documents` / prontuário; idempotência e metadados. |
 | Embeddings + vector store | Escolha fixa (dimensão, modelo); persistência (ex.: `pgvector` ou índice documentado). |
 | API ou tool de retrieval | Contrato estável: `patient_id` + query → top-k passagens + scores. **Implementado:** `POST /v1/patients/{uuid}/retrieve` + worker `embed_chunks`. |
-| Integração agente (OpenClaw / GenAI) | `GENAI_*` / `--check-agent` evoluído para **fluxo RAG** com fixture ou paciente de teste. |
+| Integração agente (OpenClaw / GenAI) | `GENAI_*` / `--check-agent`; **`rag_demo --with-agent`** (contexto dos hits + `chat_completion`); tool HTTP `POST …/retrieve` documentada em `execucao-plano-integracao.md` §3.1. |
 | Checkpoints técnicos | Onde o fluxo pára/retoma (run id, cursor, estado); “cruzamento” entre passos **dentro** do pipeline RAG (ingestão → indexar → consultar). |
 
 **Critérios de saída (gate B→C)**

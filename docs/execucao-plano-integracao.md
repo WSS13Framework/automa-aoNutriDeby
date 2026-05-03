@@ -1,6 +1,6 @@
 # Execução do plano: DO GenAI + OpenClaw + pipeline Datebox
 
-O código referido abaixo está **aplicado no repositório** (`clients/genai_agent.py`, `persist/crm_persist.py`, `config.py`, `crm_extract.py`, `.env.example`). Este doc mantém o **checklist operacional** e o `curl` de diagnóstico.
+O código referido abaixo está **aplicado no repositório** (`clients/genai_agent.py`, `rag/patient_retrieve.py`, `workers/rag_demo.py`, `persist/crm_persist.py`, `config.py`, `crm_extract.py`, `.env.example`). Este doc mantém o **checklist operacional** e o `curl` de diagnóstico.
 
 **Importação Postgres:** `python3 -m nutrideby.workers.crm_extract --import-json data/exemplo_import.json` ou `--import-csv` (ver README).
 
@@ -8,7 +8,7 @@ O código referido abaixo está **aplicado no repositório** (`clients/genai_age
 
 1. **OpenClaw:** revogar o token exposto no chat; criar novo; guardar só em secrets do painel.
 2. **OpenClaw → Modelo:** configurar DeepSeek (OpenRouter slug DeepSeek ou `https://api.deepseek.com` + `DEEPSEEK_API_KEY` se o produto permitir base OpenAI-compatible).
-3. **Ponte RAG:** quando o OpenClaw suportar, configurar tool/proxy HTTP para `GENAI_AGENT_URL` com header `Authorization: Bearer <GENAI_AGENT_ACCESS_KEY>`.
+3. **Ponte RAG (NutriDeby → OpenClaw):** configurar tool HTTP para `POST /v1/patients/{uuid}/retrieve` na API NutriDeby (ver §3.1). O agente DO GenAI (`GENAI_AGENT_*`) continua acessível com Bearer próprio para *completions*; são canais complementares.
 
 ## 2. Variáveis de ambiente
 
@@ -32,6 +32,24 @@ curl -sS -X POST \
 ```
 
 Se devolver `404`, tenta também `$GENAI_AGENT_URL/v1/chat/completions?agent=true`. O código do worker tenta `/api/v1/` primeiro.
+
+### 3.1 Retrieval NutriDeby (tool HTTP para OpenClaw)
+
+A API expõe `POST /v1/patients/{uuid}/retrieve` com header `X-API-Key` e corpo `{"query":"…","k":5}`. Na tool do OpenClaw (ou proxy), injeta o UUID interno do paciente da sessão e a pergunta do utilizador em `query`.
+
+```bash
+curl -sS -X POST "https://SEU_HOST/v1/patients/UUID_PACIENTE/retrieve" \
+  -H "X-API-Key: $NUTRIDEBY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"Pergunta alinhada ao prontuário","k":5}'
+```
+
+**Demo local (Postgres + embeddings + opcional agente):**
+
+```bash
+python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Pergunta"
+python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Pergunta" --with-agent
+```
 
 ## 4. `src/nutrideby/config.py`
 

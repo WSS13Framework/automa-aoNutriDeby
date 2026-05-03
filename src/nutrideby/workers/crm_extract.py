@@ -10,6 +10,8 @@ Uso:
   python3 -m nutrideby.workers.crm_extract --check-agent
   python3 -m nutrideby.workers.crm_extract --import-csv data/export.csv
   python3 -m nutrideby.workers.crm_extract --import-json data/exemplo_import.json
+
+RAG (retrieve + demo com agente): ``python3 -m nutrideby.workers.rag_demo --help``.
 """
 
 from __future__ import annotations

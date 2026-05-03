@@ -82,3 +82,55 @@ def check_agent_inference(
             return False
     logger.error("Agente GenAI inacessível (404 em ambos os paths): %s", last_err)
     return False
+
+
+def chat_completion(
+    agent_base_url: str,
+    access_key: str,
+    messages: list[dict[str, Any]],
+    *,
+    max_tokens: int = 512,
+    timeout: int = 120,
+) -> tuple[int, str, str]:
+    """
+    POST estilo OpenAI ao agente DO GenAI. Devolve ``(http_status, corpo_json, path_usado)``.
+    Erro de rede ou resposta não-2xx após esgotar paths → ``RuntimeError``.
+    """
+    access_key = access_key.strip()
+    if not access_key:
+        raise RuntimeError("GENAI_AGENT_ACCESS_KEY vazio")
+    base = agent_base_url.rstrip("/")
+    body: dict[str, Any] = {
+        "model": "ignored",
+        "messages": messages,
+        "max_tokens": max_tokens,
+    }
+    last_err: str | None = None
+    for path in _COMPLETION_PATHS:
+        url = f"{base}{path}"
+        try:
+            status, text = _post_json(url, body, access_key, timeout)
+            if 200 <= status < 300:
+                return status, text, path
+            last_err = f"HTTP {status}: {text[:400]}"
+            if status != 404:
+                raise RuntimeError(last_err)
+        except OSError as e:
+            raise RuntimeError(f"rede: {e}") from e
+    raise RuntimeError(f"Agente inacessível (404 em ambos os paths): {last_err}")
+
+
+def assistant_content_from_completion(raw_json: str) -> str:
+    """Extrai ``choices[0].message.content`` do JSON do agente; fallback truncado."""
+    try:
+        o = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return raw_json[:4000]
+    choices = o.get("choices")
+    if isinstance(choices, list) and choices:
+        msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if isinstance(msg, dict):
+            c = msg.get("content")
+            if isinstance(c, str):
+                return c
+    return raw_json[:4000]

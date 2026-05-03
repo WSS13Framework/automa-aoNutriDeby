@@ -160,6 +160,14 @@ curl -sS -X POST "http://127.0.0.1:8080/v1/patients/SUBSTITUIR_UUID/retrieve" \
 - [ ] `embed_chunks` exit `0` e `SELECT count(*) FROM chunks WHERE embedding IS NOT NULL;` > 0.
 - [ ] `retrieve` devolve JSON com `hits` (pode ser lista vazia se a query não tiver vizinhos úteis).
 
+```bash
+python3 -m nutrideby.workers.rag_demo --patient-id SUBSTITUIR_UUID --query "teste" --json
+# opcional: resposta via agente DO (GENAI_*)
+python3 -m nutrideby.workers.rag_demo --patient-id SUBSTITUIR_UUID --query "teste" --with-agent
+```
+
+- [ ] `rag_demo` sem `--with-agent` exit `0` quando existirem embeddings para esse paciente.
+
 ---
 
 ## 4. Próximas implementações (ordem sugerida pós-MVP)

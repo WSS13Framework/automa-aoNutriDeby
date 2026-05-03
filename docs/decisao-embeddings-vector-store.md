@@ -40,7 +40,7 @@
 1. ~~Worker `embed_chunks`~~ **Feito:** `python -m nutrideby.workers.embed_chunks` preenche `embedding` + `embedding_model`.
 2. Índice **HNSW** — já criado na migração `004` (reavaliar parâmetros após carga real).
 3. ~~Endpoint `patient_id` + texto → top-k~~ **Feito:** `POST /v1/patients/{uuid}/retrieve` (distância coseno `<=>`).
-4. Script de demo documentado no `checklist-mvp-e-endpoints.md` (pergunta → passagens citadas).
+4. ~~Script de demo~~ **Feito:** `python -m nutrideby.workers.rag_demo` (+ checklist Teste H / README).
 
 ---
 

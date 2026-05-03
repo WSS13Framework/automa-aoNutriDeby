@@ -105,6 +105,16 @@ curl -sS -X POST "http://127.0.0.1:8080/v1/patients/UUID_PACIENTE/retrieve" \
 
 Resposta: `hits[]` com `chunk_id`, `text`, `distance`, `score` (monotónico; menor `distance` = mais similar em pgvector).
 
+**Demo CLI (retrieval + opcional agente DO GenAI):**
+
+```bash
+python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "pergunta sobre a ficha"
+python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "..." --json
+python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "..." --with-agent
+```
+
+OpenClaw / tool HTTP: ver **`docs/execucao-plano-integracao.md`** §3.1.
+
 Se no servidor der `unrecognized arguments: --sync-list`, o código está desactualizado: actualiza o repo e corre `docker compose build worker`.
 
 Aumenta `--max-pages` para sincronizar mais páginas. Por omissão envia `IsActive=true`. `--include-inactive` omite o parâmetro (todos). `--inactive-only` envia `IsActive=false` (como no DevTools quando a lista são inactivos).
