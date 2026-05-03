@@ -95,25 +95,35 @@ docker compose --profile tools run --rm worker python -m nutrideby.workers.embed
 
 Depois de `chunk_documents`, se usares `--force` nos chunks, volta a correr `embed_chunks` nesse documento.
 
-API semântica (corpo JSON):
+API semântica (corpo JSON): o segmento do URL tem de ser um **UUID real** (`xxxxxxxx-xxxx-…`); texto tipo `SEU_UUID` ou `UUID_PACIENTE` **falha** na validação.
+
+No servidor (um `patient_id` da base):
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8081/v1/patients/UUID_PACIENTE/retrieve" \
+PID=$(docker compose exec -T postgres psql -U nutrideby -d nutrideby -t -A -c "SELECT id::text FROM patients LIMIT 1;" | tr -d ' \n')
+curl -sS -X POST "http://127.0.0.1:8081/v1/patients/${PID}/retrieve" \
   -H "X-API-Key: $NUTRIDEBY_API_KEY" -H "Content-Type: application/json" \
   -d '{"query":"hipertensão e sódio","k":5}'
 ```
 
 Resposta: `hits[]` com `chunk_id`, `text`, `distance`, `score` (monotónico; menor `distance` = mais similar em pgvector).
 
-**Demo CLI (retrieval + opcional agente DO GenAI):**
+**Demo CLI (retrieval + opcional agente DO GenAI):** usa o mesmo ``$PID`` ou cola um UUID válido copiado do `psql`.
 
 ```bash
-python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "pergunta sobre a ficha"
-python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "..." --json
-python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "..." --with-agent
-# Com agente: prompts clínicos em ``nutrideby.rag.clinical_analyst_prompts`` — ``--persona clinical`` ou ``--persona motor``
-python3 -m nutrideby.workers.rag_demo --patient-id UUID_PACIENTE --query "Analise os exames" --with-agent --persona clinical
+PID=$(docker compose exec -T postgres psql -U nutrideby -d nutrideby -t -A -c "SELECT id::text FROM patients LIMIT 1;" | tr -d ' \n')
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo \
+  --patient-id "$PID" --query "pergunta sobre a ficha"
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo \
+  --patient-id "$PID" --query "teste" --json
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo \
+  --patient-id "$PID" --query "teste" --with-agent
+# Prompts clínicos: ``nutrideby.rag.clinical_analyst_prompts`` — ``--persona clinical`` ou ``--persona motor``
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo \
+  --patient-id "$PID" --query "Analise os exames" --with-agent --persona clinical --max-tokens 900
 ```
+
+Fora do Docker (Postgres acessível em ``DATABASE_URL``): ``python3 -m nutrideby.workers.rag_demo --patient-id "$PID" ...`` com ``PID`` obtido da mesma forma ou via cliente SQL.
 
 OpenClaw / tool HTTP: ver **`docs/execucao-plano-integracao.md`** §3.1.
 

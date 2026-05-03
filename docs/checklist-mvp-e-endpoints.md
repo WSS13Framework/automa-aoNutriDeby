@@ -152,7 +152,8 @@ Requer: migração `004`, Postgres com extensão `vector`, `OPENAI_API_KEY` no `
 ```bash
 python3 -m nutrideby.workers.embed_chunks --limit 10 --dry-run
 python3 -m nutrideby.workers.embed_chunks --limit 10
-curl -sS -X POST "http://127.0.0.1:8081/v1/patients/SUBSTITUIR_UUID/retrieve" \
+PID=$(docker compose exec -T postgres psql -U nutrideby -d nutrideby -t -A -c "SELECT id::text FROM patients LIMIT 1;" | tr -d ' \n')
+curl -sS -X POST "http://127.0.0.1:8081/v1/patients/${PID}/retrieve" \
   -H "X-API-Key: $NUTRIDEBY_API_KEY" -H "Content-Type: application/json" \
   -d '{"query":"uma pergunta alinhada ao prontuário","k":3}'
 ```
@@ -161,9 +162,10 @@ curl -sS -X POST "http://127.0.0.1:8081/v1/patients/SUBSTITUIR_UUID/retrieve" \
 - [ ] `retrieve` devolve JSON com `hits` (pode ser lista vazia se a query não tiver vizinhos úteis).
 
 ```bash
-python3 -m nutrideby.workers.rag_demo --patient-id SUBSTITUIR_UUID --query "teste" --json
+PID=$(docker compose exec -T postgres psql -U nutrideby -d nutrideby -t -A -c "SELECT id::text FROM patients LIMIT 1;" | tr -d ' \n')
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo --patient-id "$PID" --query "teste" --json
 # opcional: resposta via agente DO (GENAI_*)
-python3 -m nutrideby.workers.rag_demo --patient-id SUBSTITUIR_UUID --query "teste" --with-agent
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo --patient-id "$PID" --query "teste" --with-agent
 ```
 
 - [ ] `rag_demo` sem `--with-agent` exit `0` quando existirem embeddings para esse paciente.

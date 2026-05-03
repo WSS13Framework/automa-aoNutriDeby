@@ -44,15 +44,20 @@ curl -sS -X POST "https://SEU_HOST/v1/patients/UUID_PACIENTE/retrieve" \
   -d '{"query":"Pergunta alinhada ao prontuário","k":5}'
 ```
 
-**Demo local (Postgres + embeddings + opcional agente):**
+**Demo (Postgres + embeddings + opcional agente):** ``--patient-id`` tem de ser um **UUID hexadecimal válido**; não uses marcadores tipo ``UUID`` ou ``SEU_UUID`` (o ``argparse`` rejeita).
+
+No servidor com Docker (recomendado):
 
 ```bash
-python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Pergunta"
-python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Pergunta" --with-agent
-# Prompts clínicos acordados (texto em ``src/nutrideby/rag/clinical_analyst_prompts.py``):
-python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Analise os exames" --with-agent --persona clinical
-python3 -m nutrideby.workers.rag_demo --patient-id UUID --query "Resumo para o prontuário" --with-agent --persona motor
+PID=$(docker compose exec -T postgres psql -U nutrideby -d nutrideby -t -A -c "SELECT id::text FROM patients LIMIT 1;" | tr -d ' \n')
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo --patient-id "$PID" --query "Pergunta"
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo --patient-id "$PID" --query "Pergunta" --with-agent
+# Prompts clínicos (``src/nutrideby/rag/clinical_analyst_prompts.py``):
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo --patient-id "$PID" --query "Analise os exames" --with-agent --persona clinical
+docker compose --profile tools run --rm worker python -m nutrideby.workers.rag_demo --patient-id "$PID" --query "Resumo para o prontuário" --with-agent --persona motor
 ```
+
+Em máquina local com ``DATABASE_URL`` apontando ao Postgres: ``python3 -m nutrideby.workers.rag_demo --patient-id "$PID" ...`` com o mesmo ``PID`` obtido via ``psql``.
 
 ## 4. `src/nutrideby/config.py`
 

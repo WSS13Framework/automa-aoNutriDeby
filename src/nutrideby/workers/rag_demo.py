@@ -271,7 +271,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p = argparse.ArgumentParser(description="Demo RAG: retrieve + opcional GenAI agent")
     mode = p.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--patient-id", type=uuid.UUID, help="UUID interno do paciente")
+    mode.add_argument(
+        "--patient-id",
+        type=uuid.UUID,
+        help="UUID interno do paciente (formato xxxxxxxx-xxxx-…; não uses texto tipo SEU_UUID)",
+    )
     mode.add_argument(
         "--all-dietbox",
         action="store_true",
