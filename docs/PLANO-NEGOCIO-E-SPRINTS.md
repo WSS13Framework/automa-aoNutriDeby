@@ -29,6 +29,8 @@ A. Espelho → B. API interna → C. WhatsApp + campanhas → D. RAG → E. UAT 
 
 Para **ordem de execução** quando o piloto técnico exige RAG/infra antes de WhatsApp/Kiwify, usar **`docs/sequencia-planos-abc-mvp.md`** (Planos A→B→C→MVP e gates).
 
+Replicação Dietbox → API própria (token, sync, evolução): **`docs/replicacao-dietbox-para-api-propria.md`**.
+
 ## 5. Sprints (2 semanas — sugestão)
 
 **Sprint 1 — Conector MVP**  
