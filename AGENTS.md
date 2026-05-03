@@ -71,6 +71,16 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 - Anything that leaves the machine
 - Anything you're uncertain about
 
+## Deploy: GitHub is canonical
+
+**Rule:** GitHub is the source of truth. Work is merged and **pushed to GitHub**; the server **never** relies on ad-hoc copies of code from chat or laptops alone.
+
+- After changes: **commit → push** to the remote (e.g. `origin/main`).
+- On the server: **clone once**, then routine updates with **`git pull`** (same remote/branch). Rebuild/restart containers after pull when the image or code changed.
+- Do not assume the server matches local unless `git pull` was run (or deploy pipeline ran) after the push.
+
+Details for this repo: `docs/operacao-git-docker-servidor.md` if present.
+
 ## Group Chats
 
 You have access to your human's stuff. That doesn't mean you _share_ their stuff. In groups, you're a participant — not their voice, not their proxy. Think before you speak.
