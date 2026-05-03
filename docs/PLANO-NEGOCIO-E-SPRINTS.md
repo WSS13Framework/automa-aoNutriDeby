@@ -27,6 +27,8 @@ Documento vivo: ajustar após cada retro. Objetivo — **piloto comprovado** →
 
 A. Espelho → B. API interna → C. WhatsApp + campanhas → D. RAG → E. UAT piloto → F. Dashboard paciente.
 
+Para **ordem de execução** quando o piloto técnico exige RAG/infra antes de WhatsApp/Kiwify, usar **`docs/sequencia-planos-abc-mvp.md`** (Planos A→B→C→MVP e gates).
+
 ## 5. Sprints (2 semanas — sugestão)
 
 **Sprint 1 — Conector MVP**  
