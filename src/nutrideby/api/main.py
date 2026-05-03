@@ -109,6 +109,16 @@ class ChunkListItem(BaseModel):
 class RetrieveRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=8000)
     k: int = Field(default=5, ge=1, le=20)
+    exclude_prontuario_placeholder: bool = Field(
+        default=True,
+        description="Excluir chunks marcador de prontuário 204 (sem corpo útil).",
+    )
+    min_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Opcional: só hits com score >= valor (score = 1/(1+distance)).",
+    )
 
 
 class RetrieveHit(BaseModel):
@@ -124,6 +134,20 @@ class RetrieveResponse(BaseModel):
     query: str
     embedding_model: str
     hits: list[RetrieveHit]
+
+
+class PatientRagCoverageItem(BaseModel):
+    """Contagens de chunks por paciente para diagnóstico RAG (embeddings vs marcador 204)."""
+
+    patient_id: str
+    source_system: str
+    external_id: str
+    display_name: str | None
+    chunks_total: int
+    chunks_embedded: int
+    chunks_missing_embedding: int
+    placeholder_prontuario_embedded: int
+    usable_embedded_chunks: int
 
 
 def _conn(settings: Settings) -> psycopg.Connection:
@@ -205,6 +229,80 @@ def list_patients(
                 external_id=r["external_id"],
                 display_name=r.get("display_name"),
                 updated_at=r["updated_at"].isoformat() if r.get("updated_at") else "",
+            )
+        )
+    return out
+
+
+@app.get(
+    "/v1/patients/rag-coverage",
+    dependencies=[Depends(require_api_key)],
+    response_model=list[PatientRagCoverageItem],
+)
+def list_patients_rag_coverage(
+    settings: Annotated[Settings, Depends(get_settings)],
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    source_system: str | None = Query(None, description="Filtrar por source_system, ex. dietbox"),
+    min_usable_embedded: int = Query(
+        0,
+        ge=0,
+        description="Só pacientes com pelo menos N chunks embedded e não marcador 204.",
+    ),
+) -> list[PatientRagCoverageItem]:
+    """
+    Lista pacientes com contagens de chunks: total, com embedding, sem embedding,
+    marcador de prontuário 204 (ainda embedded mas inútil para RAG), e ``usable``
+    (embedded e texto diferente do marcador 204).
+    """
+    with _conn(settings) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.id AS patient_id,
+                       p.source_system,
+                       p.external_id,
+                       p.display_name,
+                       COUNT(c.id)::int AS chunks_total,
+                       COUNT(c.id) FILTER (WHERE c.embedding IS NOT NULL)::int AS chunks_embedded,
+                       COUNT(c.id) FILTER (WHERE c.embedding IS NULL)::int AS chunks_missing_embedding,
+                       COUNT(c.id) FILTER (
+                         WHERE c.embedding IS NOT NULL
+                           AND coalesce(c.text, '') LIKE '[Prontuário: API 204%%'
+                       )::int AS placeholder_prontuario_embedded,
+                       COUNT(c.id) FILTER (
+                         WHERE c.embedding IS NOT NULL
+                           AND coalesce(c.text, '') NOT LIKE '[Prontuário: API 204%%'
+                       )::int AS usable_embedded_chunks
+                FROM patients p
+                LEFT JOIN chunks c ON c.patient_id = p.id
+                WHERE (%s IS NULL OR p.source_system = %s)
+                GROUP BY p.id, p.source_system, p.external_id, p.display_name
+                HAVING COUNT(c.id) FILTER (
+                         WHERE c.embedding IS NOT NULL
+                           AND coalesce(c.text, '') NOT LIKE '[Prontuário: API 204%%'
+                       ) >= %s
+                ORDER BY usable_embedded_chunks DESC, chunks_embedded DESC
+                LIMIT %s OFFSET %s
+                """,
+                (source_system, source_system, min_usable_embedded, limit, offset),
+            )
+            rows = cur.fetchall()
+    out: list[PatientRagCoverageItem] = []
+    for r in rows:
+        out.append(
+            PatientRagCoverageItem(
+                patient_id=str(r["patient_id"]),
+                source_system=r["source_system"],
+                external_id=r["external_id"],
+                display_name=r.get("display_name"),
+                chunks_total=int(r.get("chunks_total") or 0),
+                chunks_embedded=int(r.get("chunks_embedded") or 0),
+                chunks_missing_embedding=int(r.get("chunks_missing_embedding") or 0),
+                placeholder_prontuario_embedded=int(
+                    r.get("placeholder_prontuario_embedded") or 0
+                ),
+                usable_embedded_chunks=int(r.get("usable_embedded_chunks") or 0),
             )
         )
     return out
@@ -369,6 +467,8 @@ def retrieve_chunks(
                 query=body.query,
                 k=body.k,
                 settings=settings,
+                exclude_prontuario_placeholder=body.exclude_prontuario_placeholder,
+                min_score=body.min_score,
             )
     except ValueError as e:
         raise HTTPException(

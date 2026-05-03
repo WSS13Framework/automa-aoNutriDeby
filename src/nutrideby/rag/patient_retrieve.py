@@ -18,7 +18,7 @@ from nutrideby.config import Settings
 
 def _sql_retrieve(exclude_prontuario_placeholder: bool) -> str:
     ph = (
-        " AND (coalesce(c.text, '') NOT LIKE '[Prontuário: API 204%') "
+        " AND (coalesce(c.text, '') NOT LIKE '[Prontuário: API 204%%') "
         if exclude_prontuario_placeholder
         else ""
     )
