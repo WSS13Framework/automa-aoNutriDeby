@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     genai_agent_url: str | None = None
     genai_agent_access_key: str | None = None
 
+    # DigitalOcean Spaces — data lake (JSON de análise; Postgres guarda só a URL)
+    spaces_access_key_id: str | None = None
+    spaces_secret_access_key: str | None = None
+    spaces_bucket: str = "nutridebv2"
+    spaces_region: str = "lon1"
+    spaces_endpoint: str = "https://lon1.digitaloceanspaces.com"
+
     playwright_headless: bool = True
     playwright_storage_state: str | None = None
 

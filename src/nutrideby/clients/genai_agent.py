@@ -122,12 +122,16 @@ def chat_completion(
     *,
     max_tokens: int = 512,
     timeout: int = 120,
+    telemetry_context: dict[str, Any] | None = None,
 ) -> tuple[int, str, str]:
     """
     POST estilo OpenAI ao agente DO GenAI. Devolve ``(http_status, corpo_json, path_usado)``.
 
     Mensagens ``system`` / ``developer`` são fundidas num único ``user`` (requisito do
     endpoint com ``agent=true``). Um único ``user`` passa inalterado.
+
+    ``telemetry_context``: metadados opcionais para indexação OpenSearch (telemetria);
+    ver ``nutrideby.clients.opensearch_telemetry``.
     Erro de rede ou resposta não-2xx após esgotar paths → ``RuntimeError``.
     """
     access_key = access_key.strip()
@@ -146,6 +150,19 @@ def chat_completion(
         try:
             status, text = _post_json(url, body, access_key, timeout)
             if 200 <= status < 300:
+                if telemetry_context is not None:
+                    try:
+                        from nutrideby.clients.opensearch_telemetry import log_rag_genai_interaction
+
+                        log_rag_genai_interaction(
+                            telemetry=telemetry_context,
+                            http_status=status,
+                            raw_completion_json=text,
+                            assistant_text=assistant_content_from_completion(text),
+                            agent_path=path,
+                        )
+                    except Exception:
+                        logger.exception("OpenSearch telemetria: falha não bloqueante")
                 return status, text, path
             last_err = f"HTTP {status}: {text[:400]}"
             if status != 404:

@@ -13,7 +13,9 @@ ENV PYTHONUNBUFFERED=1 \
 COPY pyproject.toml README.md ./
 RUN pip install --upgrade pip && \
     pip install \
+    "boto3>=1.35.0" \
     "fastapi>=0.115.0" \
+    "opensearch-py>=2.4.0" \
     "playwright==1.58.0" \
     "psycopg[binary]>=3.2.0" \
     "pydantic-settings>=2.6.0" \

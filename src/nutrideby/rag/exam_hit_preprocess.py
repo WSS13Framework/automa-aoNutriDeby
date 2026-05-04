@@ -161,4 +161,5 @@ def extract_and_compare_exams(
 
 {body}
 
+Ordenação: datas com exames estão da **mais recente para a mais antiga** quando há data explícita (ISO ou DD/MM/AAAA).
 Instrução: cruza isto com os trechos brutos [chunk_id=…]; se discordar, prevalece o texto original. Identifica valores fora de meta (LOW/HIGH) e sugere ajustes alimentares alinhados ao plano NutriDeby (evidência nos documentos)."""

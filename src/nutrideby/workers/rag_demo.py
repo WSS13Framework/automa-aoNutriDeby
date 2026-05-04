@@ -32,8 +32,10 @@ import psycopg.errors
 from psycopg.rows import dict_row
 
 from nutrideby.clients.genai_agent import assistant_content_from_completion, chat_completion
+from nutrideby.clients.spaces import upload_json_analysis_if_configured
 from nutrideby.clients.openai_embeddings import embed_single_query
 from nutrideby.config import Settings
+from nutrideby.persist.analysis_export import insert_genai_analysis_export
 from nutrideby.rag.clinical_analyst_prompts import build_system_prompt
 from nutrideby.rag.exam_hit_preprocess import extract_and_compare_exams
 from nutrideby.rag.patient_retrieve import patient_retrieve
@@ -124,20 +126,73 @@ def run(
     # role=system — instruções vêm da configuração do agente ou embutidas aqui no user.
     user_payload = f"{system}\n\n---\n\n**Pergunta do operador:**\n\n{query}"
     messages: list[dict[str, str]] = [{"role": "user", "content": user_payload}]
+    telemetry_context: dict[str, Any] = {
+        "patient_id": str(patient_id),
+        "query": query,
+        "persona": persona,
+        "embedding_model": model,
+        "rag_hit_scores": [
+            {
+                "chunk_id": str(h.get("chunk_id", "")),
+                "score": float(h["score"]),
+                "distance": float(h["distance"]),
+            }
+            for h in hits
+        ],
+    }
     try:
         status, raw, path = chat_completion(
             str(url).strip(),
             str(key).strip(),
             messages,
             max_tokens=max_tokens,
+            telemetry_context=telemetry_context,
         )
     except RuntimeError as e:
         logger.error("Agente GenAI: %s", e)
         return 1
     logger.info("rag_demo: agente HTTP %s path=%s", status, path)
+    assistant_text = assistant_content_from_completion(raw)
     if not as_json:
         print("\n========== RESPOSTA AGENTE ==========\n")
-    print(assistant_content_from_completion(raw))
+    print(assistant_text)
+
+    spaces_url = upload_json_analysis_if_configured(
+        access_key_id=settings.spaces_access_key_id,
+        secret_access_key=settings.spaces_secret_access_key,
+        bucket=settings.spaces_bucket,
+        region=settings.spaces_region,
+        endpoint_url=settings.spaces_endpoint,
+        payload={
+            "patient_id": str(patient_id),
+            "query": query,
+            "persona": persona,
+            "embedding_model": model,
+            "hits": hits,
+            "raw_completion": raw,
+            "assistant_markdown": assistant_text,
+            "http_status": status,
+            "agent_path": path,
+        },
+    )
+    if spaces_url:
+        try:
+            with psycopg.connect(settings.database_url) as conn:
+                insert_genai_analysis_export(
+                    conn,
+                    patient_id=patient_id,
+                    spaces_url=spaces_url,
+                    persona=persona,
+                    query_preview=query[:500],
+                )
+                conn.commit()
+            logger.info("rag_demo: análise exportada spaces_url=%s", spaces_url)
+        except psycopg.errors.UndefinedTable:
+            logger.warning(
+                "Tabela genai_analysis_exports em falta — aplica infra/sql/005_genai_analysis_export.sql"
+            )
+        except Exception:
+            logger.exception("rag_demo: falha ao gravar URL da análise no Postgres")
     return 0
 
 
