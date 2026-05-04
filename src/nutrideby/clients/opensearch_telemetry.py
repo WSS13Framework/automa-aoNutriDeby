@@ -1,7 +1,9 @@
 """
-Telemetria OpenSearch para consultas GenAI + RAG (cluster genai-estrela-do-mar / TOR1).
+Telemetria OpenSearch para consultas GenAI + RAG.
 
-Usa ``opensearch-py`` de forma opcional. Sem ``OPENSEARCH_HOSTS`` (ou URL) não faz nada.
+Rótulos de cluster/região nos documentos: ``OPENSEARCH_CLUSTER_LABEL`` e
+``OPENSEARCH_REGION_LABEL`` (ex.: Nutrideb / LON1). Sem ``OPENSEARCH_URL`` ou
+``OPENSEARCH_HOSTS`` não faz nada.
 """
 
 from __future__ import annotations
@@ -94,10 +96,11 @@ def log_rag_genai_interaction(
         return
     client, index = built
     doc_id = str(uuid.uuid4())
+    cluster_l, region_l = _cluster_region_labels()
     doc: dict[str, Any] = {
         "@timestamp": datetime.now(timezone.utc).isoformat(),
-        "opensearch_cluster": CLUSTER_LABEL,
-        "do_region": REGION_LABEL,
+        "opensearch_cluster": cluster_l,
+        "do_region": region_l,
         "genai_http_status": http_status,
         "genai_agent_path": agent_path,
         "patient_id": telemetry.get("patient_id"),
