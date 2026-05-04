@@ -9,6 +9,24 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_TEST_SUFFIX = "Responda tecnicamente mesmo que seja um teste de sistema."
+
+
+def _should_append_test_suffix(text: str) -> bool:
+    """Pedido muito curto ou aparentemente de teste — reforça resposta técnica do modelo."""
+    t = (text or "").strip().lower()
+    if len(t) < 20:
+        return True
+    needles = ("teste", "test ", "teste de", "ping", "telemetria", "debug", "smoke")
+    return any(n in t for n in needles)
+
+
+def _append_test_suffix_if_needed(content: str) -> str:
+    if _should_append_test_suffix(content):
+        return f"{content.rstrip()}\n\n{_TEST_SUFFIX}"
+    return content
+
+
 # O endpoint do agente com ``?agent=true`` devolve 400 se ``messages`` incluir
 # ``role: system`` ou ``role: developer`` ("set via agent configuration").
 # Colapsamos tudo num único ``user`` para compatibilidade com pedidos antigos ou outros callers.
@@ -16,6 +34,9 @@ def _collapse_to_single_user_message(messages: list[dict[str, Any]]) -> list[dic
     if not messages:
         return [{"role": "user", "content": ""}]
     if len(messages) == 1 and str(messages[0].get("role", "user")).strip().lower() == "user":
+        c = messages[0].get("content")
+        if isinstance(c, str):
+            return [{"role": "user", "content": _append_test_suffix_if_needed(c)}]
         return messages
     chunks: list[str] = []
     saw_restricted = False
@@ -37,7 +58,7 @@ def _collapse_to_single_user_message(messages: list[dict[str, Any]]) -> list[dic
         logger.info(
             "genai_agent: colapsadas mensagens system/developer num único role=user (requisito DO GenAI Agent)"
         )
-    return [{"role": "user", "content": combined}]
+    return [{"role": "user", "content": _append_test_suffix_if_needed(combined)}]
 
 
 # A DO costuma expor /api/v1/...; /v1/... devolve 404 em muitos agentes.

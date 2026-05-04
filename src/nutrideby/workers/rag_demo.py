@@ -92,6 +92,12 @@ def run(
         logger.error("Extensão pgvector em falta ou operador inválido na base")
         return 1
 
+    if not hits and exclude_prontuario_placeholder:
+        logger.warning(
+            "rag_demo: 0 hits com exclusão de placeholder 204 activa — se este paciente só tiver "
+            "chunks marcador de prontuário vazio, tenta de novo com --no-exclude-placeholder"
+        )
+
     if as_json:
         print(json.dumps({"embedding_model": model, "hits": hits}, ensure_ascii=False, indent=2))
     else:

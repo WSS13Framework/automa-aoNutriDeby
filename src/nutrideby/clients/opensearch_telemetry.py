@@ -1,8 +1,7 @@
 """
 Telemetria OpenSearch para consultas GenAI + RAG.
 
-Rótulos de cluster/região nos documentos: ``OPENSEARCH_CLUSTER_LABEL`` e
-``OPENSEARCH_REGION_LABEL`` (ex.: Nutrideb / LON1). Sem ``OPENSEARCH_URL`` ou
+Rótulos fixos de cluster/região nos documentos indexados. Sem ``OPENSEARCH_URL`` ou
 ``OPENSEARCH_HOSTS`` não faz nada.
 """
 
@@ -17,8 +16,10 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-CLUSTER_LABEL = "genai-estrela-do-mar"
-REGION_LABEL = "TOR1"
+
+def _cluster_region_labels() -> tuple[str, str]:
+    """Rótulos gravados na telemetria (cluster DO GenAI / região TOR1)."""
+    return ("genai-estrela-do-mar", "TOR1")
 
 
 def _build_client():
