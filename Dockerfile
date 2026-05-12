@@ -13,6 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY pyproject.toml README.md ./
 RUN pip install --upgrade pip && \
     pip install \
+    "redis>=5.0.0" \
     "boto3>=1.35.0" \
     "fastapi>=0.115.0" \
     "opensearch-py>=2.4.0" \

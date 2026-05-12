@@ -16,8 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
+from nutrideby.clients.openai_embeddings import embed_single_query
 from nutrideby.config import Settings
 from nutrideby.rag.patient_retrieve import patient_retrieve
+from nutrideby.rag.retrieve_embedding_cache import (
+    get_cached_query_embedding,
+    normalize_query_for_embedding_cache,
+    set_cached_query_embedding,
+)
 from nutrideby.persist.crm_persist import find_document_id_by_content_hash, insert_document_if_new
 from nutrideby.persist.snapshots import (
     KEY_DIETBOX_NUTRITIONIST_SUBSCRIPTION,
@@ -56,7 +62,7 @@ def require_api_key(
 
 app = FastAPI(
     title="NutriDeby API leitura",
-    version="0.4.2",
+    version="0.4.3",
     description="Leitura Postgres, ingestão de documentos (texto), RAG retrieval (pgvector) e hooks (ex.: Kiwify).",
     lifespan=lifespan,
 )
@@ -161,6 +167,10 @@ class RetrieveResponse(BaseModel):
     query: str
     embedding_model: str
     hits: list[RetrieveHit]
+    embedding_cache_hit: bool = Field(
+        default=False,
+        description="True se o vector da query veio do Redis (L1 exact-match), sem nova chamada OpenAI embeddings.",
+    )
 
 
 class PatientRagCoverageItem(BaseModel):
@@ -537,18 +547,72 @@ def retrieve_chunks(
     """
     Busca semântica por paciente: embedding da ``query`` + ordem por distância coseno (pgvector).
     Requer migração 004, chunks com ``embedding`` preenchido (``embed_chunks``) e ``OPENAI_API_KEY``.
+
+    Com ``RETRIEVE_EMBEDDING_CACHE_ENABLED`` (default) + Redis, reutiliza o vector da query
+    quando o texto normalizado é idêntico ao de um pedido anterior (menos chamadas OpenAI).
     """
+    normalized = normalize_query_for_embedding_cache(body.query)
+    cached_vec: list[float] | None = None
+    embedding_cache_hit = False
+    if settings.retrieve_embedding_cache_enabled:
+        cached_vec = get_cached_query_embedding(
+            redis_url=settings.redis_url,
+            patient_id=patient_id,
+            normalized_query=normalized,
+        )
+        if cached_vec is not None:
+            embedding_cache_hit = True
+
     try:
         with _conn(settings) as conn:
-            model, row_dicts = patient_retrieve(
-                conn,
-                patient_id=patient_id,
-                query=body.query,
-                k=body.k,
-                settings=settings,
-                exclude_prontuario_placeholder=body.exclude_prontuario_placeholder,
-                min_score=body.min_score,
-            )
+            if cached_vec is not None:
+                model, row_dicts = patient_retrieve(
+                    conn,
+                    patient_id=patient_id,
+                    query=body.query,
+                    k=body.k,
+                    settings=settings,
+                    exclude_prontuario_placeholder=body.exclude_prontuario_placeholder,
+                    min_score=body.min_score,
+                    precomputed_query_embedding=cached_vec,
+                )
+            elif settings.retrieve_embedding_cache_enabled:
+                key = settings.openai_api_key
+                if not (key and str(key).strip()):
+                    raise ValueError("OPENAI_API_KEY em falta")
+                fresh_vec = embed_single_query(
+                    api_base=settings.openai_api_base,
+                    api_key=str(key).strip(),
+                    model=settings.openai_embedding_model,
+                    text=body.query,
+                )
+                model, row_dicts = patient_retrieve(
+                    conn,
+                    patient_id=patient_id,
+                    query=body.query,
+                    k=body.k,
+                    settings=settings,
+                    exclude_prontuario_placeholder=body.exclude_prontuario_placeholder,
+                    min_score=body.min_score,
+                    precomputed_query_embedding=fresh_vec,
+                )
+                set_cached_query_embedding(
+                    redis_url=settings.redis_url,
+                    patient_id=patient_id,
+                    normalized_query=normalized,
+                    embedding=fresh_vec,
+                    ttl_seconds=settings.retrieve_embedding_cache_ttl_seconds,
+                )
+            else:
+                model, row_dicts = patient_retrieve(
+                    conn,
+                    patient_id=patient_id,
+                    query=body.query,
+                    k=body.k,
+                    settings=settings,
+                    exclude_prontuario_placeholder=body.exclude_prontuario_placeholder,
+                    min_score=body.min_score,
+                )
     except ValueError as e:
         raise HTTPException(
             status_code=503,
@@ -581,7 +645,12 @@ def retrieve_chunks(
         )
         for r in row_dicts
     ]
-    return RetrieveResponse(query=body.query, embedding_model=model, hits=hits)
+    return RetrieveResponse(
+        query=body.query,
+        embedding_model=model,
+        hits=hits,
+        embedding_cache_hit=embedding_cache_hit,
+    )
 
 
 def _kiwify_path_secret_ok(settings: Settings, secret: str) -> bool:

@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     )
     redis_url: str = Field(default="redis://localhost:6379/0")
 
+    # Cache L1 (Redis): embedding da query em /retrieve — reduz chamadas OpenAI em perguntas repetidas
+    retrieve_embedding_cache_enabled: bool = Field(default=True)
+    retrieve_embedding_cache_ttl_seconds: int = Field(
+        default=604800,
+        description="TTL do vector da query em Redis (default 7 dias).",
+    )
+
     crm_base_url: str | None = None
     crm_username: str | None = None
     crm_password: str | None = None
