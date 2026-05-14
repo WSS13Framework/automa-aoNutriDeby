@@ -213,17 +213,17 @@ def importar_pacientes(
                     # Inserir documento RAG se tiver texto
                     doc_text = _build_document_text(p)
                     if doc_text and patient_id:
-                        content_hash = hashlib.sha256(doc_text.encode()).hexdigest()
+                        content_sha256 = hashlib.sha256(doc_text.encode()).hexdigest()
                         cur.execute(
                             """
-                            INSERT INTO documents (patient_id, doc_type, content_text, content_hash, source_ref, metadata, collected_at)
+                            INSERT INTO documents (patient_id, doc_type, content_text, content_sha256, source_ref, metadata, collected_at)
                             VALUES (%s, 'import', %s, %s, %s, %s::jsonb, NOW())
-                            ON CONFLICT (content_hash) DO NOTHING
+                            ON CONFLICT (content_sha256) DO NOTHING
                             """,
                             (
                                 patient_id,
                                 doc_text,
-                                content_hash,
+                                content_sha256,
                                 f"import:{source_system}:{external_id}",
                                 json.dumps({"source_platform": source_system, "import": True}, ensure_ascii=False),
                             ),
