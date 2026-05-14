@@ -84,9 +84,6 @@ services:
     profiles:
       - api
 
-volumes:
-  pgdata:
-
   dashboard:
     build:
       context: ./dashboard
@@ -99,3 +96,6 @@ volumes:
       - api
     profiles:
       - api
+
+volumes:
+  pgdata:
