@@ -21,7 +21,10 @@ RUN pip install --upgrade pip && \
     "psycopg[binary]>=3.2.0" \
     "pydantic-settings>=2.6.0" \
     "selenium>=4.15.0" \
-    "uvicorn[standard]>=0.32.0"
+    "uvicorn[standard]>=0.32.0" \
+    "cryptography>=42.0.0" \
+    "rq>=1.16.0" \
+    "pdfplumber>=0.11.0"
 
 COPY src ./src
 
