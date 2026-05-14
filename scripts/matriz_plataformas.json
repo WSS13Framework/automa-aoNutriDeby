@@ -1,0 +1,399 @@
+{
+  "versao": "1.0.0",
+  "data_atualizacao": "2026-05-14",
+  "perguntas_estrategicas": {
+    "maior_volume_nutricionistas": "Dietbox — líder declarado de mercado no Brasil, com marketing agressivo, ecossistema completo (app paciente, academy, marketing) e presença dominante em redes sociais. Estimativa: 30-40% do mercado de software de nutrição no Brasil.",
+    "mais_aberta": "DietSmart — software desktop com banco local Firebird acessível, SmartData para backup/restore, exportação de clientes em CSV e API REST parcial documentada. Rota de extração mais direta.",
+    "mais_fechada": "Nutrium — SaaS cloud europeu (Portugal), sem banco local, sem exportação estruturada de prontuários, apenas PDF. Requer engenharia reversa de API ou LGPD/GDPR.",
+    "rota_mais_rapida": {
+      "Dietbox": "API REST autenticada (Bearer token) — endpoints /v2/pacientes e /v2/prontuario já mapeados no Swagger dev",
+      "DietSmart": "Banco local Firebird em C:/DietSmart/dados/ — leitura direta com fdb Python sem autenticação",
+      "Nutrium": "Exportação nativa PDF + OCR (Tesseract) — única rota sem risco legal",
+      "DietSystem": "API REST interna (app mobile usa) — engenharia reversa via proxy MITM",
+      "NutriCloud": "Exportação CSV nativa via painel web — scraping autenticado"
+    },
+    "dados_mais_valiosos": "Prontuário clínico (texto livre com diagnóstico, medicamentos, condições) > Histórico de evolução (série temporal de peso/medidas) > Metas nutricionais (calorias, macros) > Plano alimentar (refeições estruturadas). O prontuário é o mais rico para RAG.",
+    "riscos_legais": {
+      "exportacao_nativa": "Nenhum — dados do próprio nutricionista/paciente",
+      "banco_local_DietSmart": "Nenhum — acesso local autorizado pelo próprio usuário",
+      "API_reversa": "Moderado — pode violar ToS da plataforma, mas não a LGPD se os dados são do próprio profissional",
+      "scraping_autenticado": "Baixo — autenticação com credenciais próprias do nutricionista",
+      "LGPD_portabilidade": "Nenhum — Art. 18 LGPD garante portabilidade de dados ao titular"
+    }
+  },
+  "plataformas": [
+    {
+      "nome": "Dietbox",
+      "prioridade": 1,
+      "empresa": "Tecsa Group / Dietbox.me",
+      "tipo": "SaaS Web + App Mobile",
+      "banco_local": "Nenhum (cloud)",
+      "api_publica": "Parcial",
+      "api_url": "https://api-dev.dietbox.me/index.html",
+      "autenticacao": "OAuth2 Bearer Token",
+      "market_share_estimado": "35%",
+      "status_extracao": "430 pacientes já importados via meta_export",
+      "dados_exportaveis": {
+        "nome_paciente": {"disponivel": true, "formato": "JSON/API"},
+        "dados_cadastrais": {"disponivel": true, "formato": "JSON/API"},
+        "prontuario_clinico": {"disponivel": true, "formato": "JSON/API v2"},
+        "metas_nutricionais": {"disponivel": true, "formato": "JSON/API — meta_export"},
+        "plano_alimentar": {"disponivel": true, "formato": "JSON/API"},
+        "historico_evolucao": {"disponivel": true, "formato": "JSON/API"},
+        "medidas_antropometricas": {"disponivel": true, "formato": "JSON/API"},
+        "exames_laboratoriais": {"disponivel": "parcial", "formato": "JSON/API"},
+        "receitas_prescricoes": {"disponivel": true, "formato": "JSON/API"}
+      },
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "API REST autenticada",
+          "descricao": "Endpoints /v2/pacientes, /v2/paciente/{id}/prontuario, /v2/paciente/{id}/metas",
+          "autenticacao": "Bearer token via OAuth2 (login nutricionista)",
+          "complexidade": "Baixa",
+          "tempo_estimado": "2-4h",
+          "risco_legal": "Nenhum",
+          "status": "ATIVO — já em uso"
+        },
+        {
+          "id": 2,
+          "tipo": "LGPD/Portabilidade",
+          "descricao": "Solicitar exportação via Art. 18 LGPD — prazo 15 dias úteis",
+          "complexidade": "Baixa",
+          "tempo_estimado": "15 dias úteis",
+          "risco_legal": "Nenhum",
+          "status": "Fallback"
+        }
+      ],
+      "script": "scripts/extractors/dietbox_extractor.py",
+      "complexidade_geral": "Baixa",
+      "notas": "Líder de mercado. API bem documentada no Swagger. Já temos 430 pacientes importados. Prioridade: documentar e automatizar o fluxo meta_export."
+    },
+    {
+      "nome": "DietSmart",
+      "prioridade": 1,
+      "empresa": "DietSmart System",
+      "tipo": "Desktop (Windows/Mac) + App Mobile",
+      "banco_local": "Firebird (C:/DietSmart/dados/ ou ~/DietSmart/dados/)",
+      "api_publica": "Não (SmartData = backup proprietário)",
+      "autenticacao": "Login local",
+      "market_share_estimado": "15%",
+      "status_extracao": "Cliente confirmou exportação parcial — rota banco local viável",
+      "dados_exportaveis": {
+        "nome_paciente": {"disponivel": true, "formato": "Firebird DB / CSV export"},
+        "dados_cadastrais": {"disponivel": true, "formato": "Firebird DB"},
+        "prontuario_clinico": {"disponivel": true, "formato": "Firebird DB — tabela EVOLUCAO"},
+        "metas_nutricionais": {"disponivel": true, "formato": "Firebird DB — tabela PLANO_ALIMENTAR"},
+        "plano_alimentar": {"disponivel": true, "formato": "Firebird DB"},
+        "historico_evolucao": {"disponivel": true, "formato": "Firebird DB — tabela CONSULTA"},
+        "medidas_antropometricas": {"disponivel": true, "formato": "Firebird DB — tabela ANTROPOMETRIA"},
+        "exames_laboratoriais": {"disponivel": true, "formato": "Firebird DB"},
+        "receitas_prescricoes": {"disponivel": true, "formato": "Firebird DB"}
+      },
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "Banco local Firebird",
+          "descricao": "Leitura direta do banco Firebird em C:/DietSmart/dados/DIETSMART.FDB usando fdb Python",
+          "dependencias": ["fdb", "firebird-driver"],
+          "complexidade": "Média",
+          "tempo_estimado": "4-8h",
+          "risco_legal": "Nenhum",
+          "status": "VIÁVEL"
+        },
+        {
+          "id": 2,
+          "tipo": "SmartData backup",
+          "descricao": "Exportar backup SmartData (.smd) e fazer parse do arquivo proprietário",
+          "complexidade": "Alta",
+          "tempo_estimado": "1-2 dias",
+          "risco_legal": "Nenhum",
+          "status": "Fallback"
+        },
+        {
+          "id": 3,
+          "tipo": "Exportação nativa CSV",
+          "descricao": "Menu Gerenciar Dados > Exportar Clientes — gera CSV com dados cadastrais básicos",
+          "complexidade": "Baixa",
+          "tempo_estimado": "30min",
+          "risco_legal": "Nenhum",
+          "status": "PARCIAL — só dados cadastrais"
+        }
+      ],
+      "script": "scripts/extractors/dietsmart_extractor.py",
+      "complexidade_geral": "Média",
+      "notas": "Software desktop com banco Firebird local. Rota mais rica: leitura direta do .FDB. Requer Firebird Client instalado na máquina do nutricionista."
+    },
+    {
+      "nome": "Nutrium",
+      "prioridade": 2,
+      "empresa": "Nutrium (Portugal) — operação no Brasil",
+      "tipo": "SaaS Web + App Mobile",
+      "banco_local": "Nenhum (cloud europeu)",
+      "api_publica": "Não (API interna não documentada)",
+      "autenticacao": "OAuth2",
+      "market_share_estimado": "10%",
+      "status_extracao": "Sem API pública. Exportação nativa limitada a PDF.",
+      "dados_exportaveis": {
+        "nome_paciente": {"disponivel": true, "formato": "PDF / Web"},
+        "dados_cadastrais": {"disponivel": true, "formato": "PDF"},
+        "prontuario_clinico": {"disponivel": "parcial", "formato": "PDF não estruturado"},
+        "metas_nutricionais": {"disponivel": "parcial", "formato": "PDF"},
+        "plano_alimentar": {"disponivel": true, "formato": "PDF"},
+        "historico_evolucao": {"disponivel": "parcial", "formato": "PDF/gráfico"},
+        "medidas_antropometricas": {"disponivel": true, "formato": "PDF"},
+        "exames_laboratoriais": {"disponivel": false, "formato": "N/A"},
+        "receitas_prescricoes": {"disponivel": true, "formato": "PDF"}
+      },
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "PDF + OCR",
+          "descricao": "Exportar relatório PDF do paciente e processar com pdfplumber + regex",
+          "dependencias": ["pdfplumber", "pytesseract"],
+          "complexidade": "Média",
+          "tempo_estimado": "1 dia",
+          "risco_legal": "Nenhum",
+          "status": "VIÁVEL — dados parciais"
+        },
+        {
+          "id": 2,
+          "tipo": "Web scraping autenticado",
+          "descricao": "Playwright com login do nutricionista para extrair dados do painel web",
+          "dependencias": ["playwright"],
+          "complexidade": "Alta",
+          "tempo_estimado": "2-3 dias",
+          "risco_legal": "Moderado — pode violar ToS",
+          "status": "Viável com risco"
+        },
+        {
+          "id": 3,
+          "tipo": "LGPD/GDPR Portabilidade",
+          "descricao": "Solicitar exportação de dados via Art. 18 LGPD / Art. 20 GDPR",
+          "complexidade": "Baixa",
+          "tempo_estimado": "30 dias",
+          "risco_legal": "Nenhum",
+          "status": "Fallback legal"
+        }
+      ],
+      "script": "scripts/extractors/nutrium_extractor.py",
+      "complexidade_geral": "Alta",
+      "notas": "Plataforma europeia com GDPR. Sem banco local. Rota mais segura: PDF + pdfplumber. Dados estruturados limitados."
+    },
+    {
+      "nome": "DietSystem",
+      "prioridade": 2,
+      "empresa": "DietSystem Tecnologia",
+      "tipo": "SaaS Web + App Mobile",
+      "banco_local": "Nenhum (cloud)",
+      "api_publica": "Não (API interna usada pelo app mobile)",
+      "autenticacao": "Bearer Token (app mobile)",
+      "market_share_estimado": "12%",
+      "status_extracao": "API interna mapeável via proxy MITM",
+      "dados_exportaveis": {
+        "nome_paciente": {"disponivel": true, "formato": "API interna / PDF"},
+        "dados_cadastrais": {"disponivel": true, "formato": "API interna"},
+        "prontuario_clinico": {"disponivel": true, "formato": "API interna"},
+        "metas_nutricionais": {"disponivel": true, "formato": "API interna"},
+        "plano_alimentar": {"disponivel": true, "formato": "API interna — com foto"},
+        "historico_evolucao": {"disponivel": true, "formato": "API interna"},
+        "medidas_antropometricas": {"disponivel": true, "formato": "API interna"},
+        "exames_laboratoriais": {"disponivel": "parcial", "formato": "API interna"},
+        "receitas_prescricoes": {"disponivel": true, "formato": "API interna"}
+      },
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "Engenharia reversa API mobile",
+          "descricao": "Proxy MITM (mitmproxy) no app Android/iOS para capturar endpoints e tokens",
+          "dependencias": ["mitmproxy", "requests"],
+          "complexidade": "Alta",
+          "tempo_estimado": "2-3 dias",
+          "risco_legal": "Moderado — ToS",
+          "status": "Viável com esforço"
+        },
+        {
+          "id": 2,
+          "tipo": "Exportação PDF nativa",
+          "descricao": "Exportar relatório de consulta em PDF e processar com pdfplumber",
+          "complexidade": "Média",
+          "tempo_estimado": "1 dia",
+          "risco_legal": "Nenhum",
+          "status": "VIÁVEL — dados parciais"
+        }
+      ],
+      "script": "scripts/extractors/dietsystem_extractor.py",
+      "complexidade_geral": "Alta",
+      "notas": "Tem IA nativa e BodyScan. API interna rica mas requer engenharia reversa. Diferencial: plano alimentar com foto dos alimentos."
+    },
+    {
+      "nome": "NutriCloud",
+      "prioridade": 2,
+      "empresa": "NutriCloud / Amplinutri",
+      "tipo": "SaaS Web",
+      "banco_local": "Nenhum (cloud)",
+      "api_publica": "Não",
+      "autenticacao": "Login/Senha",
+      "market_share_estimado": "5%",
+      "status_extracao": "Exportação CSV nativa via painel",
+      "dados_exportaveis": {
+        "nome_paciente": {"disponivel": true, "formato": "CSV"},
+        "dados_cadastrais": {"disponivel": true, "formato": "CSV"},
+        "prontuario_clinico": {"disponivel": "parcial", "formato": "PDF"},
+        "metas_nutricionais": {"disponivel": true, "formato": "CSV"},
+        "plano_alimentar": {"disponivel": "parcial", "formato": "PDF"},
+        "historico_evolucao": {"disponivel": true, "formato": "CSV"},
+        "medidas_antropometricas": {"disponivel": true, "formato": "CSV"},
+        "exames_laboratoriais": {"disponivel": false, "formato": "N/A"},
+        "receitas_prescricoes": {"disponivel": "parcial", "formato": "PDF"}
+      },
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "Exportação CSV nativa",
+          "descricao": "Painel web > Pacientes > Exportar CSV — dados cadastrais + evolução",
+          "complexidade": "Baixa",
+          "tempo_estimado": "1-2h",
+          "risco_legal": "Nenhum",
+          "status": "VIÁVEL"
+        },
+        {
+          "id": 2,
+          "tipo": "Web scraping autenticado",
+          "descricao": "Playwright com credenciais do nutricionista para dados completos",
+          "dependencias": ["playwright"],
+          "complexidade": "Média",
+          "tempo_estimado": "1 dia",
+          "risco_legal": "Baixo",
+          "status": "Viável"
+        }
+      ],
+      "script": "scripts/extractors/nutricloud_extractor.py",
+      "complexidade_geral": "Baixa",
+      "notas": "Menor market share mas exportação CSV nativa facilita integração. Dados de prontuário limitados."
+    },
+    {
+      "nome": "Prescribe / NutriPrescribe",
+      "prioridade": 2,
+      "empresa": "NutriPrescribe",
+      "tipo": "SaaS Web",
+      "banco_local": "Nenhum (cloud)",
+      "api_publica": "Não",
+      "autenticacao": "Login/Senha",
+      "market_share_estimado": "3%",
+      "status_extracao": "Emergente — foco em prescrição com IA",
+      "dados_exportaveis": {
+        "nome_paciente": {"disponivel": true, "formato": "Web"},
+        "dados_cadastrais": {"disponivel": true, "formato": "Web"},
+        "prontuario_clinico": {"disponivel": "parcial", "formato": "PDF"},
+        "metas_nutricionais": {"disponivel": true, "formato": "PDF"},
+        "plano_alimentar": {"disponivel": true, "formato": "PDF"},
+        "historico_evolucao": {"disponivel": "parcial", "formato": "Web"},
+        "medidas_antropometricas": {"disponivel": true, "formato": "Web/PDF"},
+        "exames_laboratoriais": {"disponivel": false, "formato": "N/A"},
+        "receitas_prescricoes": {"disponivel": true, "formato": "PDF"}
+      },
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "PDF + pdfplumber",
+          "descricao": "Exportar prescrição em PDF e extrair com pdfplumber",
+          "complexidade": "Média",
+          "tempo_estimado": "1 dia",
+          "risco_legal": "Nenhum",
+          "status": "VIÁVEL — dados parciais"
+        }
+      ],
+      "script": "scripts/extractors/prescribe_extractor.py",
+      "complexidade_geral": "Média",
+      "notas": "Foco em prescrição com IA. Sem exportação estruturada. Rota PDF viável para planos alimentares."
+    },
+    {
+      "nome": "SmartDiet.ai",
+      "prioridade": 3,
+      "empresa": "SmartDiet.ai",
+      "tipo": "SaaS Web + App",
+      "banco_local": "Nenhum (cloud)",
+      "api_publica": "Não",
+      "autenticacao": "Login/Senha",
+      "market_share_estimado": "2%",
+      "status_extracao": "Emergente — IA nativa, sem exportação estruturada",
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "Web scraping",
+          "descricao": "Playwright autenticado para extrair dados do painel",
+          "complexidade": "Alta",
+          "tempo_estimado": "2 dias",
+          "risco_legal": "Moderado",
+          "status": "Baixa prioridade"
+        }
+      ],
+      "script": "scripts/extractors/smartdiet_extractor.py",
+      "complexidade_geral": "Alta",
+      "notas": "Plataforma emergente focada em IA. Baixa prioridade por market share reduzido."
+    },
+    {
+      "nome": "Dieta e Saúde",
+      "prioridade": 3,
+      "empresa": "Dieta e Saúde",
+      "tipo": "Web + App",
+      "banco_local": "Nenhum",
+      "api_publica": "Não",
+      "autenticacao": "Login/Senha",
+      "market_share_estimado": "3%",
+      "status_extracao": "Foco em paciente final, não nutricionista",
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "Exportação nativa",
+          "descricao": "Exportar diário alimentar em CSV/PDF",
+          "complexidade": "Baixa",
+          "tempo_estimado": "2h",
+          "risco_legal": "Nenhum",
+          "status": "VIÁVEL — dados de diário"
+        }
+      ],
+      "script": "scripts/extractors/dietaesaude_extractor.py",
+      "complexidade_geral": "Baixa",
+      "notas": "Focado no paciente, não no nutricionista. Dados de diário alimentar úteis para RAG de comportamento."
+    },
+    {
+      "nome": "MyFitnessPal",
+      "prioridade": 3,
+      "empresa": "MyFitnessPal Inc.",
+      "tipo": "App Mobile + Web",
+      "banco_local": "Nenhum",
+      "api_publica": "Sim (parcial — API v2 com OAuth)",
+      "api_url": "https://www.myfitnesspal.com/api",
+      "autenticacao": "OAuth2",
+      "market_share_estimado": "N/A — app de consumidor",
+      "status_extracao": "API pública disponível para dados de diário",
+      "rotas_extracao": [
+        {
+          "id": 1,
+          "tipo": "API OAuth2",
+          "descricao": "API v2 com OAuth — acesso a diário alimentar, exercícios, peso",
+          "complexidade": "Média",
+          "tempo_estimado": "4h",
+          "risco_legal": "Nenhum",
+          "status": "VIÁVEL — integração indireta"
+        }
+      ],
+      "script": "scripts/extractors/myfitnesspal_extractor.py",
+      "complexidade_geral": "Média",
+      "notas": "Integração indireta — paciente autoriza acesso. Útil para dados de adesão e diário alimentar do dia a dia."
+    }
+  ],
+  "ranking_prioridade_extracao": [
+    {"posicao": 1, "plataforma": "Dietbox", "justificativa": "Já em uso, API documentada, 430 pacientes importados"},
+    {"posicao": 2, "plataforma": "DietSmart", "justificativa": "Cliente aguardando, banco Firebird local acessível"},
+    {"posicao": 3, "plataforma": "NutriCloud", "justificativa": "CSV nativo, baixa complexidade"},
+    {"posicao": 4, "plataforma": "DietSystem", "justificativa": "Alto market share, API interna rica"},
+    {"posicao": 5, "plataforma": "Nutrium", "justificativa": "Market share relevante, mas extração complexa"},
+    {"posicao": 6, "plataforma": "Prescribe", "justificativa": "PDF viável, emergente"},
+    {"posicao": 7, "plataforma": "MyFitnessPal", "justificativa": "API pública, integração indireta"},
+    {"posicao": 8, "plataforma": "Dieta e Saúde", "justificativa": "Dados de diário, baixa prioridade clínica"},
+    {"posicao": 9, "plataforma": "SmartDiet.ai", "justificativa": "Emergente, alta complexidade, baixo ROI"}
+  ]
+}
