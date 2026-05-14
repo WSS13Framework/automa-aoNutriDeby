@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nutrideby-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nutrideby-net
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: nutrideby-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nutrideby
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nutrideby_secret}
+      POSTGRES_DB: nutrideby
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nutrideby"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nutrideby-net
+
+volumes:
+  pgdata:
+
+networks:
+  nutrideby-net:
+    driver: bridge
