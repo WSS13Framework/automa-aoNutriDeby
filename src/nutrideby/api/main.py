@@ -31,6 +31,7 @@ from nutrideby.persist.snapshots import (
 )
 from nutrideby.persist.webhook_inbox import insert_webhook_inbox
 from nutrideby.api.importar import router as importar_router
+from nutrideby.api.onboarding import router as onboarding_router
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ app.add_middleware(
 )
 
 app.include_router(importar_router, dependencies=[Depends(require_api_key)])
+app.include_router(onboarding_router, dependencies=[Depends(require_api_key)])
 
 
 @app.on_event("startup")
