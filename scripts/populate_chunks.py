@@ -1,74 +1,69 @@
-import os
+#!/usr/bin/env python3
+"""
+Popula chunks e embeddings para TODOS os documentos do banco.
+
+Uso (no host, fora do Docker):
+  cd /opt/automa-aoNutriDeby
+  set -a; source .env; set +a
+  export PYTHONPATH=/opt/automa-aoNutriDeby/src
+  python3 scripts/populate_chunks.py
+
+Uso (dentro do container api):
+  docker compose --profile api exec api python3 scripts/populate_chunks.py
+
+O script chama os mesmos workers que já existem:
+  1. chunk_documents.run() — segmenta documents.content_text → chunks
+  2. embed_chunks.run()   — gera embeddings via OpenAI → chunks.embedding
+"""
 import sys
-import uuid
-import psycopg
-from psycopg.rows import dict_row
-from dotenv import load_dotenv
+import os
+import logging
 
-# Adicionar src ao PYTHONPATH
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+# Garante que src está no PYTHONPATH
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from nutrideby.config import Settings
-from nutrideby.workers.chunk_documents import chunk_patient_documents
-from nutrideby.workers.embed_chunks import embed_patient_chunks
+from nutrideby.workers.chunk_documents import run as run_chunks
+from nutrideby.workers.embed_chunks import run as run_embeds
 
-def main():
-    load_dotenv()
-    settings = Settings()
-    
-    if not settings.openai_api_key:
-        print("ERRO: OPENAI_API_KEY não definida no .env")
-        sys.exit(1)
-        
-    print(f"Conectando ao banco de dados: {settings.database_url}")
-    
-    try:
-        with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
-            with conn.cursor() as cur:
-                # Buscar todos os pacientes que têm documentos
-                cur.execute("""
-                    SELECT DISTINCT p.id 
-                    FROM patients p
-                    JOIN documents d ON d.patient_id = p.id
-                """)
-                patients = cur.fetchall()
-                
-                print(f"Encontrados {len(patients)} pacientes com documentos.")
-                
-                for p in patients:
-                    patient_id = p['id']
-                    print(f"\nProcessando paciente: {patient_id}")
-                    
-                    # 1. Gerar chunks
-                    print("  -> Gerando chunks...")
-                    try:
-                        chunk_patient_documents(conn, patient_id=patient_id)
-                        conn.commit()
-                    except Exception as e:
-                        print(f"  -> Erro ao gerar chunks: {e}")
-                        conn.rollback()
-                        continue
-                        
-                    # 2. Gerar embeddings
-                    print("  -> Gerando embeddings...")
-                    try:
-                        embed_patient_chunks(
-                            conn, 
-                            patient_id=patient_id,
-                            api_base=settings.openai_api_base,
-                            api_key=settings.openai_api_key,
-                            model=settings.openai_embedding_model
-                        )
-                        conn.commit()
-                    except Exception as e:
-                        print(f"  -> Erro ao gerar embeddings: {e}")
-                        conn.rollback()
-                        
-        print("\nProcessamento concluído com sucesso!")
-        
-    except Exception as e:
-        print(f"Erro fatal: {e}")
-        sys.exit(1)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("populate_chunks")
+
+
+def main() -> int:
+    # 1. Chunking — processar até 5000 documentos
+    logger.info("=== Etapa 1/2: Gerando chunks ===")
+    rc = run_chunks(
+        limit=5000,
+        doc_type=None,
+        patient_id=None,
+        max_chars=1200,
+        force=False,
+        dry_run=False,
+    )
+    if rc != 0:
+        logger.error("chunk_documents falhou (rc=%s)", rc)
+        return rc
+
+    # 2. Embeddings — processar até 5000 chunks sem embedding
+    logger.info("=== Etapa 2/2: Gerando embeddings ===")
+    rc = run_embeds(
+        limit=5000,
+        patient_id=None,
+        batch_size=32,
+        force=False,
+        dry_run=False,
+        http_timeout=120,
+    )
+    if rc != 0:
+        logger.error("embed_chunks falhou (rc=%s)", rc)
+        return rc
+
+    logger.info("=== Concluído com sucesso ===")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
