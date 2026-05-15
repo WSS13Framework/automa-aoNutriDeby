@@ -2,7 +2,9 @@
 
 ## Contexto
 
-O NutriDeby está sendo remodelado de uma ferramenta single-tenant (uma clínica) para um **SaaS B2B2C Multi-Tenant** com modelo de negócio **Product-Led Growth (PLG)**. Este documento descreve a arquitetura-alvo e os passos de migração.
+O NutriDeby não é uma ferramenta de consulta; é um **Agente de Execução**. O nutricionista é o "Diretor" e a IA é o "Gerente de Operações" que cuida de cada paciente proativamente.
+
+O NutriDeby está sendo remodelado de uma ferramenta single-tenant (uma clínica) para um **SaaS B2B2C Multi-Tenant** com modelo de negócio **Product-Led Growth (PLG)**. Este documento descreve a arquitetura-alvo e os passos de migração, com foco na **IA Proativa**.
 
 ## Modelo de Negócio
 

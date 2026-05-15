@@ -1,4 +1,8 @@
-# NutriDeby — MVP (demo cliente)
+# NutriDeby — Agente de Execução para Nutricionistas
+
+**NutriDeby não é uma ferramenta de consulta; é um Agente de Execução. O nutricionista é o "Diretor" e a IA é o "Gerente de Operações" que cuida de cada paciente proativamente.**
+
+
 
 Pipeline: **ingestão** (Dietbox API v2 ou ficheiros) → **Postgres** (`patients`, `documents`) → (futuro) RAG / GenAI.
 
