@@ -313,7 +313,7 @@ def list_patients_rag_coverage(
                        )::int AS usable_embedded_chunks
                 FROM patients p
                 LEFT JOIN chunks c ON c.patient_id = p.id
-                WHERE (%s IS NULL OR p.source_system = %s)
+                WHERE (%s::text IS NULL OR p.source_system = %s)
                 GROUP BY p.id, p.source_system, p.external_id, p.display_name
                 HAVING COUNT(c.id) FILTER (
                          WHERE c.embedding IS NOT NULL
