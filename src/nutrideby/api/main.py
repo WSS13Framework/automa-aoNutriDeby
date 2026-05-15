@@ -11,12 +11,14 @@ from uuid import UUID
 
 import psycopg
 import psycopg.errors
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
 from nutrideby.clients.openai_embeddings import embed_single_query
+from nutrideby.api.analyze import router as analyze_router
+from nutrideby.api.deps import get_settings, require_api_key
 from nutrideby.config import Settings
 from nutrideby.rag.patient_retrieve import patient_retrieve
 from nutrideby.rag.retrieve_embedding_cache import (
@@ -45,25 +47,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-def get_settings() -> Settings:
-    return Settings()
-
-
-def require_api_key(
-    settings: Annotated[Settings, Depends(get_settings)],
-    x_api_key: str | None = Header(None, alias="X-API-Key"),
-) -> None:
-    expected = settings.nutrideby_api_key
-    if not (expected and str(expected).strip()):
-        return
-    if not x_api_key or x_api_key.strip() != str(expected).strip():
-        raise HTTPException(status_code=401, detail="X-API-Key inválida ou em falta")
-
-
 app = FastAPI(
     title="NutriDeby API leitura",
-    version="0.4.3",
-    description="Leitura Postgres, ingestão de documentos (texto), RAG retrieval (pgvector) e hooks (ex.: Kiwify).",
+    version="0.4.4",
+    description="Leitura Postgres, ingestão de documentos (texto), RAG retrieval (pgvector), análise LLM e hooks (ex.: Kiwify).",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -73,6 +60,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(analyze_router)
 
 
 @app.on_event("startup")

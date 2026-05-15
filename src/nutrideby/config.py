@@ -63,3 +63,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_api_base: str = "https://api.openai.com"
     openai_embedding_model: str = "text-embedding-3-small"
+    openai_chat_model: str = Field(
+        default="gpt-4o-mini",
+        description="Modelo para /v1/patients/.../analyze quando use_genai=false ou GenAI indisponível.",
+    )
