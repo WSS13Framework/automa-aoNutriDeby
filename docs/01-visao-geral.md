@@ -2,7 +2,9 @@
 
 ## O que é o NutriDeby
 
-O NutriDeby é uma plataforma de automação para nutricionistas que combina inteligência artificial com dados clínicos para otimizar o acompanhamento de pacientes. O sistema opera em três camadas:
+O NutriDeby não é uma ferramenta de consulta; é um **Agente de Execução**. O nutricionista é o "Diretor" e a IA é o "Gerente de Operações" que cuida de cada paciente proativamente.
+
+É uma plataforma de automação para nutricionistas que combina inteligência artificial com dados clínicos para otimizar o acompanhamento de pacientes. O sistema opera em três camadas:
 
 1. **Motor de IA (Backend Python/FastAPI):** Processa dados de pacientes, gera embeddings vetoriais para busca semântica (RAG) e fornece insights clínicos automatizados.
 2. **Dashboard (Next.js):** Painel web para o profissional visualizar alertas, buscar informações nos prontuários via IA e gerenciar pacientes.
