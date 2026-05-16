@@ -20,94 +20,139 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
 
   if (error || !patient) {
     return (
-      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-        <p className="font-medium">Erro</p>
-        <p className="text-sm mt-1">{error || "Paciente não encontrado"}</p>
-        <Link href="/dashboard/pacientes" className="text-sm underline mt-2 inline-block">Voltar</Link>
+      <div className="max-w-4xl mx-auto py-20 text-center">
+        <p className="text-red-500 font-light">{error || "Paciente não encontrado"}</p>
+        <Link href="/dashboard/pacientes" className="text-brand-600 underline mt-4 inline-block">Voltar para a lista</Link>
       </div>
     );
   }
 
-  const meta = patient.metadata || {};
-  const metaExport = (meta as Record<string, unknown>).meta_export as Record<string, unknown> | undefined;
+  const meta = (patient.metadata || {}) as Record<string, any>;
+  
+  // Extração de metas do dietbox_meta_export
+  const metaExportDoc = documents.find(d => d.doc_type === 'dietbox_meta_export');
+  let goals: any[] = [];
+  if (metaExportDoc) {
+    try {
+      const parsed = JSON.parse(metaExportDoc.content_preview);
+      goals = parsed.items || [];
+    } catch (e) {
+      // Se não for JSON válido, tenta extrair do metadata do paciente
+      goals = meta.meta_export_items ? [{ nome: "Metas registradas no Dietbox" }] : [];
+    }
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Cabeçalho */}
-      <div className="flex items-center gap-4">
-        <Link href="/dashboard/pacientes" className="text-brand-600 hover:underline text-sm">&larr; Voltar</Link>
-        <h1 className="text-2xl font-bold text-gray-800">{patient.display_name || patient.external_id}</h1>
-      </div>
-
-      {/* Cards de resumo */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl shadow p-5">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Origem</p>
-          <p className="text-lg font-semibold mt-1">{patient.source_system}</p>
-          <p className="text-xs text-gray-400 mt-1">ID externo: {patient.external_id}</p>
-        </div>
-        <div className="bg-white rounded-xl shadow p-5">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Documentos</p>
-          <p className="text-3xl font-bold text-brand-600 mt-1">{patient.documents_count}</p>
-        </div>
-        <div className="bg-white rounded-xl shadow p-5">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Atualizado</p>
-          <p className="text-lg font-semibold mt-1">
-            {new Date(patient.updated_at).toLocaleDateString("pt-BR")}
-          </p>
-        </div>
-      </div>
-
-      {/* Metas Nutricionais (meta_export) */}
-      {metaExport && (
-        <div className="bg-white rounded-xl shadow p-5">
-          <h2 className="text-lg font-bold text-gray-800 mb-3">Metas Nutricionais</h2>
-          <div className="overflow-x-auto">
-            <pre className="text-xs bg-gray-50 p-4 rounded-lg overflow-auto max-h-64">
-              {JSON.stringify(metaExport, null, 2)}
-            </pre>
+    <div className="max-w-5xl mx-auto pb-20">
+      {/* Navegação e Título */}
+      <div className="flex items-center justify-between mb-12">
+        <div className="flex items-center space-x-6">
+          <Link href="/dashboard/pacientes" className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-brand-50 hover:text-brand-600 transition-all">
+            &larr;
+          </Link>
+          <div>
+            <h1 className="text-3xl font-light text-gray-900 tracking-tight">{patient.display_name || "Paciente"}</h1>
+            <p className="text-sm text-gray-400 font-light uppercase tracking-widest mt-1">
+              {patient.source_system} • ID {patient.external_id}
+            </p>
           </div>
         </div>
-      )}
-
-      {/* Metadata geral */}
-      {Object.keys(meta).length > 0 && !metaExport && (
-        <div className="bg-white rounded-xl shadow p-5">
-          <h2 className="text-lg font-bold text-gray-800 mb-3">Dados Complementares</h2>
-          <pre className="text-xs bg-gray-50 p-4 rounded-lg overflow-auto max-h-64">
-            {JSON.stringify(meta, null, 2)}
-          </pre>
+        <div className="text-right">
+          <span className="px-4 py-1.5 rounded-full bg-green-50 text-green-600 text-xs font-bold uppercase tracking-wider">
+            Monitoramento Ativo
+          </span>
         </div>
-      )}
+      </div>
 
-      {/* Documentos */}
-      <div className="bg-white rounded-xl shadow p-5">
-        <h2 className="text-lg font-bold text-gray-800 mb-3">Documentos Clínicos</h2>
-        {documents.length === 0 ? (
-          <p className="text-gray-400 text-sm">Nenhum documento encontrado.</p>
-        ) : (
-          <div className="space-y-3">
-            {documents.map((doc) => (
-              <div key={doc.id} className="border border-gray-100 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                    {doc.doc_type}
-                  </span>
-                  <span className="text-xs text-gray-400">
-                    {new Date(doc.collected_at).toLocaleDateString("pt-BR")}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap">{doc.content_preview}</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Coluna Esquerda: Dados e Metas */}
+        <div className="lg:col-span-2 space-y-8">
+          
+          {/* Metas de Execução (O Coração do Agente) */}
+          <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
+            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Metas de Execução</h2>
+            {goals.length > 0 ? (
+              <div className="space-y-4">
+                {goals.map((goal: any, idx: number) => (
+                  <div key={idx} className="flex items-start space-x-4 p-4 bg-brand-50 rounded-2xl border border-brand-100">
+                    <div className="w-6 h-6 rounded-full bg-brand-500 flex-shrink-0 flex items-center justify-center text-white text-xs">
+                      {idx + 1}
+                    </div>
+                    <div>
+                      <p className="text-brand-900 font-medium">{goal.nome}</p>
+                      {goal.descricao && <p className="text-brand-700 text-sm mt-1 font-light">{goal.descricao}</p>}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            ) : (
+              <p className="text-gray-400 font-light italic">Nenhuma meta ativa para este paciente.</p>
+            )}
+          </section>
 
-      {/* Busca RAG */}
-      <div className="bg-white rounded-xl shadow p-5">
-        <h2 className="text-lg font-bold text-gray-800 mb-3">Busca Inteligente (RAG)</h2>
-        <RagSearch patientId={params.id} />
+          {/* Busca Inteligente */}
+          <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
+            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Busca Inteligente (RAG)</h2>
+            <RagSearch patientId={params.id} />
+          </section>
+
+          {/* Documentos Clínicos */}
+          <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
+            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Histórico Clínico</h2>
+            <div className="space-y-4">
+              {documents.filter(d => d.doc_type !== 'dietbox_meta_export').map((doc) => (
+                <div key={doc.id} className="group p-4 hover:bg-gray-50 rounded-2xl transition-colors border border-transparent hover:border-gray-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-tighter text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
+                      {doc.doc_type.replace('dietbox_', '')}
+                    </span>
+                    <span className="text-xs text-gray-300">
+                      {new Date(doc.collected_at).toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-600 font-light line-clamp-3 group-hover:line-clamp-none transition-all">
+                    {doc.content_preview}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        {/* Coluna Direita: Perfil e Status */}
+        <div className="space-y-8">
+          <section className="bg-gray-900 rounded-3xl p-8 text-white shadow-xl">
+            <h2 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-6">Perfil do Paciente</h2>
+            <div className="space-y-6">
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase">Idade</p>
+                <p className="text-xl font-light">
+                  {meta.Birthday ? Math.floor((new Date().getTime() - new Date(meta.Birthday).getTime()) / (1000 * 3600 * 24 * 365.25)) : "--"} anos
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase">Ocupação</p>
+                <p className="text-xl font-light">{meta.Occupancy || "Não informada"}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase">Contato</p>
+                <p className="text-sm font-light text-gray-300">{meta.Email || "Sem e-mail"}</p>
+                <p className="text-sm font-light text-gray-300">{meta.MobilePhone || "Sem telefone"}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
+            <h2 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-6">Status da IA</h2>
+            <div className="flex items-center space-x-3">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+              <p className="text-sm text-gray-600 font-medium">Gerente de Operações Ativo</p>
+            </div>
+            <p className="text-xs text-gray-400 mt-4 font-light leading-relaxed">
+              A IA está monitorando as metas de execução e o engajamento deste paciente via WhatsApp.
+            </p>
+          </section>
+        </div>
       </div>
     </div>
   );
