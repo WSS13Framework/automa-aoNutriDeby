@@ -14,14 +14,33 @@ class ProactiveTriggers:
     def __init__(self, db_conn):
         self.db = db_conn
 
-    def check_inactivity(self, days=1):
+    def get_inactive_patients(self, days=7):
+        """
+        Busca pacientes que não tiveram atualização nos últimos X dias.
+        Lógica: patients.updated_at < (now - days)
+        """
+        logger.info(f"Buscando pacientes inativos (> {days} dias)...")
+        query = """
+            SELECT id, display_name, external_id, source_system, updated_at 
+            FROM patients 
+            WHERE updated_at < %s
+            ORDER BY updated_at ASC
+        """
+        threshold_date = datetime.now() - timedelta(days=days)
+        
+        with self.db.cursor() as cur:
+            cur.execute(query, (threshold_date,))
+            results = cur.fetchall()
+            
+        logger.info(f"Encontrados {len(results)} pacientes inativos.")
+        return results
+
+    def check_inactivity(self, days=7):
         """
         Gatilho: Paciente não envia dados ou interage há X dias.
-        Ação: IA envia mensagem de incentivo/cobrança no WhatsApp.
+        Ação: Retorna lista para processamento.
         """
-        logger.info(f"Verificando inatividade de pacientes (> {days} dias)...")
-        # TODO: Implementar query SQL para buscar pacientes sem logs recentes
-        pass
+        return self.get_inactive_patients(days=days)
 
     def check_dietary_deviation(self, threshold=0.2):
         """
