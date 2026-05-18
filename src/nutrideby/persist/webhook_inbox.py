@@ -30,34 +30,22 @@ def insert_webhook_inbox(
         return row[0]
 
 
-def fetch_pending_webhooks(
-    conn: psycopg.Connection,
-    *,
-    source: str,
-    limit: int,
-) -> list[tuple[uuid.UUID, dict[str, Any]]]:
-    """``(id, payload)`` com ``status = pending``."""
-    limit = max(1, limit)
+def fetch_pending_webhooks(conn: psycopg.Connection, *, source: str, limit: int) -> list[tuple]:
+    """Retorna lista de tuplas (id, payload) de webhooks pendentes."""
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT id, payload
-            FROM integration_webhook_inbox
-            WHERE source = %s AND status = 'pending'
-            ORDER BY received_at ASC
-            LIMIT %s
-            """,
-            (source, limit),
+            "SELECT id, payload FROM integration_webhook_inbox WHERE source=%s AND status=%s ORDER BY received_at ASC LIMIT %s",
+            [source, "pending", limit],
         )
-        rows = cur.fetchall()
-    out: list[tuple[uuid.UUID, dict[str, Any]]] = []
-    for r in rows:
-        rid, pl = r[0], r[1]
-        if not isinstance(pl, dict):
-            pl = {}
-        out.append((rid, pl))
-    return out
-
+        # Converte cada linha em tupla explícita
+        result = []
+        for row in cur.fetchall():
+            if isinstance(row, (list, tuple)):
+                result.append((row[0], row[1]))
+            else:
+                # Se for Row object, acessa como dict
+                result.append((row['id'], row['payload']))
+        return result
 
 def finalize_webhook_inbox(
     conn: psycopg.Connection,

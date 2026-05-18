@@ -73,7 +73,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     # Host 8081: evita colisão com outros serviços (ex.: outro contentor em 8080).
     ports:
-      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:84:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,5 +97,47 @@ services:
     profiles:
       - api
 
+  worker-kiwify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      sh -c "while true; do
+        python3 -m nutrideby.workers.process_kiwify_inbox --limit 50;
+        sleep 60;
+      done"
+    env_file: .env
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  evolution-api:
+    image: atendai/evolution-api:latest
+    ports:
+      - "127.0.0.1:8085:8080"
+    environment:
+      - AUTHENTICATION_API_KEY=nutrideby_evo_key
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://nutrideby:nutrideby_dev@postgres:5432/evolution
+      - DATABASE_URL=postgresql://nutrideby:nutrideby_dev@postgres:5432/evolution
+      - DATABASE_URL=postgresql://nutrideby:nutrideby_dev@postgres:5432/evolution
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
+      - DATABASE_SAVE_MESSAGE_UPDATE=false
+      - DATABASE_SAVE_DATA_CONTACTS=false
+      - DATABASE_SAVE_DATA_CHATS=false
+      - REDIS_ENABLED=false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - evolution_data:/evolution/instances
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  evolution_data:
