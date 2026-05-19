@@ -223,6 +223,57 @@ The goal: Be helpful without being annoying. Check in a few times a day, do usef
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
 
+## Cursor Cloud specific instructions
+
+### Project overview
+
+NutriDeby is a Python 3.10+ (FastAPI) nutritional CRM pipeline: Dietbox API ingestion → PostgreSQL (pgvector) → chunking → embeddings → semantic search / RAG.
+
+### Required infrastructure (Docker)
+
+Docker must be installed and the daemon running. The nested-container workaround is needed (fuse-overlayfs, iptables-legacy). After Docker is available:
+
+```bash
+docker compose up -d postgres redis
+```
+
+PostgreSQL (pgvector:pg16) on port 5432, Redis on 127.0.0.1:6379. SQL migrations in `infra/sql/` are auto-applied on first `postgres` start via `/docker-entrypoint-initdb.d` mount.
+
+### Python environment
+
+```bash
+source .venv/bin/activate
+```
+
+The update script creates and refreshes the venv. Package is installed in editable mode (`pip install -e ".[dev]"`).
+
+### Running the API (dev)
+
+```bash
+PYTHONPATH=src python -m uvicorn nutrideby.api.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+Health check: `curl http://127.0.0.1:8080/health` → `{"status":"ok"}`. The `.env` file (copied from `.env.example`) has `NUTRIDEBY_API_KEY=` empty, so `/v1/*` endpoints have no auth in dev.
+
+### Linting
+
+```bash
+ruff check src/
+```
+
+There is one pre-existing lint issue (unused import in `src/nutrideby/persist/analysis_export.py`).
+
+### Testing
+
+No automated test suite exists. Verify manually via the data import worker and API endpoints. See `README.md` for CLI usage of all workers (`data_import`, `dietbox_sync`, `chunk_documents`, `embed_chunks`, `rag_demo`).
+
+### Key gotchas
+
+- The `.env` must exist (copy from `.env.example`). Workers and the API read it via pydantic-settings.
+- Docker socket permissions: run `sudo chmod 666 /var/run/docker.sock` if permission denied on `docker` commands.
+- `python3.12-venv` package is needed on Ubuntu for `python3 -m venv`.
+- External service env vars (Dietbox, OpenAI, OpenSearch, etc.) are optional for basic dev; only needed for full pipeline features.
+
 ## Related
 
 - [Default AGENTS.md](/reference/AGENTS.default)
