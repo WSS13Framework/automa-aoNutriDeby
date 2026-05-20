@@ -1,70 +1,151 @@
-"""Worker de Disparo Trial WhatsApp + CookHero"""
-import argparse, logging, json, sys, psycopg
+"""Worker para disparo de mensagens WhatsApp trial NutriDeby"""
+import argparse
+import logging
+import sys
+from typing import Optional, List, Tuple
+import psycopg
+from twilio.rest import Client
 from nutrideby.config import Settings
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-def get_patients_for_trial(conn: psycopg.Connection, limit: int = 50, include_active: bool = True) -> list:
-    """Busca pacientes DietBox para trial"""
-    query = "SELECT id, display_name, metadata->>'MobilePhone' as phone, metadata->>'email' as email, source_system FROM patients WHERE source_system='dietbox'"
-    if not include_active:
-        query += " AND (metadata->>'IsActive' = 'false' OR metadata->>'IsActive' IS NULL)"
-    query += f" ORDER BY created_at DESC LIMIT {limit}"
-    
+# Config Twilio
+TWILIO_ACCOUNT_SID = 'AC93dd6712677973ba2cd6db053099c365'
+TWILIO_AUTH_TOKEN = '8ac1ecb44ead0fa3d539288d61f661f4'
+TWILIO_WHATSAPP_FROM = 'whatsapp:+14155238886'
+
+# Config Planos
+PLAN_CONFIG = {
+    'basico': {
+        'price': 'R$ 97',
+        'duration': '30 dias',
+        'analyses': '5 análises/dia',
+        'kiwify_link': 'https://pay.kiwify.com.br/nutrideby-basico'
+    },
+    'intermediario': {
+        'price': 'R$ 197',
+        'duration': '60 dias',
+        'analyses': '15 análises/dia',
+        'kiwify_link': 'https://pay.kiwify.com.br/nutrideby-intermediario'
+    },
+    'premium': {
+        'price': 'R$ 397',
+        'duration': 'Ilimitado',
+        'analyses': 'Ilimitado',
+        'kiwify_link': 'https://pay.kiwify.com.br/nutrideby-premium'
+    }
+}
+
+def get_inactive_patients(conn: psycopg.Connection, limit: int) -> List[Tuple]:
+    """Busca pacientes inativos com MobilePhone válido"""
     with conn.cursor() as cur:
-        cur.execute(query)
+        cur.execute("""
+            SELECT 
+                id,
+                display_name,
+                metadata->>'MobilePhone' as phone
+            FROM patients
+            WHERE source_system='dietbox'
+              AND metadata->>'IsActive' = 'false'
+              AND metadata->>'MobilePhone' IS NOT NULL
+              AND metadata->>'MobilePhone' ~ '^\+55[0-9]{10,11}$'
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, [limit])
         return cur.fetchall()
 
-def format_whatsapp_message(patient_name: str) -> str:
-    """Formata mensagem WhatsApp trial com CookHero (5%)"""
-    return f"""👋 Oi {patient_name or 'Amigo'}!
+def format_message(patient_name: str, plan: str) -> str:
+    """Formata mensagem WhatsApp por plano"""
+    config = PLAN_CONFIG[plan]
+    return f"""🤖 *Plano NutriDeby IA 24/7*
 
-🍱 *Receita do Dia - CookHero*
-Frango com Abóbora ao Forno
+📸 Foto do Alimento → Macros em Tempo Real
+✅ {config['analyses']}
+💡 Sugestões Personalizadas 24/7
 
-📸 Envie uma foto da sua refeição
-Vamos analisar juntos!
+💰 {config['price']} - {config['duration']}
 
-💰 Desbloqueie análise premium
-R$ 97 - Análise 100% completa
+🔗 Clique para ativar:
+{config['kiwify_link']}
 
-🔗 Clique para ativar
-https://kiwify.app/JzslLqX
-
+Abraços,
 NutriDeby 🌱"""
 
-def run(*, limit: int, dry_run: bool, include_active: bool = True) -> int:
+def send_whatsapp(
+    client: Client,
+    to_phone: str,
+    patient_name: str,
+    message: str,
+    dry_run: bool = True
+) -> Optional[str]:
+    """Dispara mensagem WhatsApp via Twilio"""
+    try:
+        if dry_run:
+            logger.info(f"[DRY-RUN] {to_phone} | {patient_name}")
+            return f"dry_{patient_name}"
+        
+        msg = client.messages.create(
+            from_=TWILIO_WHATSAPP_FROM,
+            body=message,
+            to=to_phone
+        )
+        logger.info(f"[ENVIADO] {to_phone} | SID: {msg.sid} | Status: {msg.status}")
+        return msg.sid
+        
+    except Exception as e:
+        logger.error(f"[ERRO] {to_phone} | {str(e)}")
+        return None
+
+def run(*, limit: int, plan: str, dry_run: bool) -> int:
+    """Executa disparo para inativos"""
+    if plan not in PLAN_CONFIG:
+        logger.error(f"Plano inválido: {plan}")
+        return 1
+    
     settings = Settings()
+    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    
     try:
         with psycopg.connect(settings.database_url) as conn:
-            patients = get_patients_for_trial(conn, limit=limit, include_active=include_active)
-            logger.info(f"worker_trial_whatsapp: encontrados {len(patients)} pacientes dry_run={dry_run}")
+            patients = get_inactive_patients(conn, limit)
+            logger.info(f"Encontrados {len(patients)} inativos | plano={plan.upper()} | dry_run={dry_run}")
             
-            for p_id, name, phone, email, source in patients:
-                if not phone:
-                    logger.warning(f"patient_id={p_id} sem phone — pulando")
-                    continue
-                
-                msg = format_whatsapp_message(name)
-                logger.info(f"patient_id={p_id} name={name} phone={phone}\nMENSAGEM:\n{msg}\n---")
-                
-                if not dry_run:
-                    logger.info(f"✓ Disparando para {phone}")
+            success = 0
+            errors = 0
             
-            logger.info(f"worker_trial_whatsapp concluído: processadas={len([p for p in patients if p[2]])} dry_run={dry_run}")
-            return 0
+            for p_id, name, phone in patients:
+                to_phone = f'whatsapp:{phone}' if not phone.startswith('+') else f'whatsapp:{phone}'
+                message = format_message(name or f'Paciente {p_id}', plan)
+                
+                result = send_whatsapp(client, to_phone, name or f'Paciente {p_id}', message, dry_run)
+                
+                if result:
+                    success += 1
+                else:
+                    errors += 1
+            
+            logger.info(f"RESUMO: {success} enviados | {errors} erros | total={len(patients)}")
+            return 0 if errors == 0 else 1
+            
     except Exception as e:
-        logger.error(f"Erro: {e}")
+        logger.error(f"Erro fatal: {e}", exc_info=True)
         return 1
 
 def main(argv=None):
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description="Worker Trial WhatsApp - NutriDeby")
     p.add_argument("--limit", type=int, default=50)
-    p.add_argument("--dry-run", action="store_true", default=False)
-    p.add_argument("--include-active", action="store_true", default=True)
+    p.add_argument("--plan", default='basico', choices=['basico', 'intermediario', 'premium'])
+    p.add_argument("--dry-run", action="store_true", default=True)
+    p.add_argument("--activate", action="store_true")
+    
     args = p.parse_args(argv)
-    return run(limit=args.limit, dry_run=args.dry_run, include_active=args.include_active)
+    dry_run = not args.activate
+    
+    return run(limit=args.limit, plan=args.plan, dry_run=dry_run)
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,0 +1,173 @@
+"""
+Hermes Agent — NutriDeb MVP
+Lê prontuário do paciente → DeepSeek gera mensagem → Twilio envia
+"""
+import logging
+import re
+import time
+from datetime import datetime
+import psycopg
+from psycopg.rows import dict_row
+from openai import OpenAI
+from twilio.rest import Client as TwilioClient
+
+logger = logging.getLogger(__name__)
+
+# Credenciais
+DEEPSEEK_API_KEY = "sk-aceaf910996443e3a7fe596830b3a0c4"
+TWILIO_SID       = "AC93dd6712677973ba2cd6db053099c365"
+TWILIO_TOKEN     = "8ac1ecb44ead0fa3d539288d61f661f4"
+TWILIO_FROM      = "whatsapp:+14155238886"
+DATABASE_URL     = "postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby"
+
+def get_inactive_patients(conn, limit=10):
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT 
+                p.id, p.display_name,
+                metadata->>'MobilePhone' as phone,
+                metadata->>'Occupancy' as ocupacao,
+                metadata->>'Birthday' as nascimento,
+                metadata->>'LastConsultation' as ultima_consulta,
+                metadata->>'Gender' as genero
+            FROM patients p
+            WHERE source_system = 'dietbox'
+              AND metadata->>'IsActive' = 'false'
+              AND metadata->>'MobilePhone' IS NOT NULL
+              AND length(regexp_replace(
+                    metadata->>'MobilePhone', '[^0-9]', '', 'g')) >= 10
+            ORDER BY (metadata->>'LastConsultation') ASC NULLS LAST
+            LIMIT %s
+        """, [limit])
+        return cur.fetchall()
+
+def get_prontuario(conn, patient_id):
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT c.text
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE c.patient_id = %s
+              AND c.text IS NOT NULL
+              AND c.text NOT LIKE '[Prontuário: API 204%%'
+            ORDER BY d.collected_at DESC
+            LIMIT 5
+        """, [patient_id])
+        rows = cur.fetchall()
+        return " ".join([r['text'] for r in rows if r['text']])
+
+def calcular_idade(nascimento):
+    try:
+        ano = int(str(nascimento)[:4])
+        return datetime.now().year - ano if ano > 1900 else None
+    except:
+        return None
+
+def formatar_phone(phone):
+    digits = re.sub(r'\D', '', phone)
+    if len(digits) <= 11:
+        return f"+55{digits}"
+    elif len(digits) <= 13:
+        return f"+{digits}"
+    return f"+{digits}"
+
+def gerar_mensagem(patient, prontuario):
+    client = OpenAI(
+        api_key=DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com/v1"
+    )
+    nome = patient['display_name'] or "paciente"
+    primeiro = nome.split()[0]
+    idade = calcular_idade(patient.get('nascimento'))
+    ocupacao = patient.get('ocupacao') or ''
+    ultima = patient.get('ultima_consulta', '')[:10] if patient.get('ultima_consulta') else 'algum tempo'
+
+    contexto = f"Prontuário resumido: {prontuario[:500]}" if prontuario else "Sem prontuário detalhado."
+
+    prompt = f"""Você é a assistente virtual da nutricionista Dra. Débora Oliver.
+Escreva uma mensagem de WhatsApp para reativar o paciente {primeiro}.
+
+Dados do paciente:
+- Nome: {primeiro}
+- Idade: {idade} anos
+- Ocupação: {ocupacao}
+- Última consulta: {ultima}
+- {contexto}
+
+Regras:
+- Máximo 100 palavras
+- Tom humano, acolhedor, sem pressão
+- Mencione algo específico do prontuário se houver
+- Mostre que a Dra. Débora lembra dele
+- Termine com UMA pergunta simples sobre como está hoje
+- Não mencione preço nem plano
+- Assine como: Assistente da Dra. Débora 🥗
+
+Escreva apenas a mensagem, sem explicações."""
+
+    try:
+        r = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.8,
+            max_tokens=200
+        )
+        return r.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"DeepSeek erro: {e}")
+        return f"Oi {primeiro}! 😊 Aqui é a assistente da Dra. Débora Oliver. Faz um tempo que não nos falamos e gostaríamos de saber como você está. A Dra. Débora tem agenda aberta para retomar seu acompanhamento. Como você está hoje?"
+
+def enviar_twilio(phone, mensagem):
+    twilio = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
+    msg = twilio.messages.create(
+        from_=TWILIO_FROM,
+        body=mensagem,
+        to=f"whatsapp:{phone}"
+    )
+    return msg.sid, msg.status
+
+def run(limit=5, dry_run=True):
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+    
+    with psycopg.connect(DATABASE_URL) as conn:
+        patients = get_inactive_patients(conn, limit)
+        logger.info(f"Hermes: {len(patients)} pacientes | dry_run={dry_run}")
+
+        enviados = 0
+        erros = 0
+
+        for p in patients:
+            nome = p['display_name']
+            phone_raw = p['phone']
+            phone = formatar_phone(phone_raw)
+
+            prontuario = get_prontuario(conn, p['id'])
+            mensagem = gerar_mensagem(p, prontuario)
+
+            logger.info(f"\n{'='*50}")
+            logger.info(f"Para: {nome} ({phone})")
+            logger.info(f"Mensagem:\n{mensagem}")
+            logger.info(f"{'='*50}")
+
+            if not dry_run:
+                try:
+                    sid, status = enviar_twilio(phone, mensagem)
+                    logger.info(f"✅ ENVIADO: {sid} | {status}")
+                    enviados += 1
+                except Exception as e:
+                    logger.error(f"❌ ERRO: {e}")
+                    erros += 1
+                time.sleep(30)
+            else:
+                logger.info("🔧 DRY RUN — não enviado")
+
+        logger.info(f"\nHermes concluído: enviados={enviados} erros={erros} dry_run={dry_run}")
+
+if __name__ == "__main__":
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--dry-run", action="store_true", default=True)
+    p.add_argument("--send", action="store_true", default=False)
+    args = p.parse_args()
+    run(limit=args.limit, dry_run=not args.send)

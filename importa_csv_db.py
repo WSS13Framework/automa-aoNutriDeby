@@ -33,6 +33,7 @@ with open(CSV_PATH, encoding='utf-8', errors='replace') as f:
     for row in reader:
         if not ok:
             if 'Nome' in row:
+                if "sep=" in row[0]: continue
                 ok = True
             continue
         if len(row) < 6:
