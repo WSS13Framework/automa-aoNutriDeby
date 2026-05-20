@@ -14,11 +14,11 @@ from twilio.rest import Client as TwilioClient
 logger = logging.getLogger(__name__)
 
 # Credenciais
-DEEPSEEK_API_KEY = "sk-aceaf910996443e3a7fe596830b3a0c4"
-TWILIO_SID       = "AC93dd6712677973ba2cd6db053099c365"
-TWILIO_TOKEN     = "8ac1ecb44ead0fa3d539288d61f661f4"
-TWILIO_FROM      = "whatsapp:+14155238886"
-DATABASE_URL     = "postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM = os.getenv("TWILIO_FROM_NUMBER", "whatsapp:+14155238886")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby")
 
 def get_inactive_patients(conn, limit=10):
     with conn.cursor(row_factory=dict_row) as cur:

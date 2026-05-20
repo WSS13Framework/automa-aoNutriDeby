@@ -14,8 +14,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Config Twilio
-TWILIO_ACCOUNT_SID = 'AC93dd6712677973ba2cd6db053099c365'
-TWILIO_AUTH_TOKEN = '8ac1ecb44ead0fa3d539288d61f661f4'
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 TWILIO_WHATSAPP_FROM = 'whatsapp:+14155238886'
 
 # Config Planos
