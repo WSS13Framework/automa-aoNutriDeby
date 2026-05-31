@@ -148,12 +148,6 @@ def get_patients_by_profile(
             (p.metadata->>'LastConsultation')::date
         ) IS NOT NULL
         {days_filter}
-        AND NOT EXISTS (
-            SELECT 1 FROM inbound_messages im
-            WHERE im.patient_id = p.id
-              AND im.message_type = 'hermes_outbound'
-              AND im.received_at::date = CURRENT_DATE
-        )
         ORDER BY last_activity_date ASC NULLS LAST
         LIMIT %s
     """
@@ -390,7 +384,6 @@ def _claude(static_system: str, dynamic_system: str, user: str) -> str:
     msg = client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=256,
-        timeout=30.0,
         system=[
             {
                 "type": "text",
@@ -472,6 +465,50 @@ def enviar_twilio(phone: str, mensagem: str) -> tuple[str, str]:
     return msg.sid, msg.status
 
 
+# ── Deduplicação ─────────────────────────────────────────────────────────────
+
+def _ensure_contact_log_table(conn: psycopg.Connection) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS hermes_contact_log (
+                id         SERIAL PRIMARY KEY,
+                patient_id UUID        NOT NULL,
+                profile    TEXT        NOT NULL,
+                sent_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hermes_log_patient_day
+            ON hermes_contact_log (patient_id, profile, (sent_at::date))
+        """)
+        conn.commit()
+
+
+def _already_contacted_today(conn: psycopg.Connection, patient_id: str, profile: str) -> bool:
+    """Retorna True se o paciente já recebeu mensagem deste perfil hoje."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM hermes_contact_log
+            WHERE patient_id = %s::uuid
+              AND profile    = %s
+              AND sent_at::date = CURRENT_DATE
+            LIMIT 1
+            """,
+            (patient_id, profile),
+        )
+        return cur.fetchone() is not None
+
+
+def _log_contact(conn: psycopg.Connection, patient_id: str, profile: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO hermes_contact_log (patient_id, profile) VALUES (%s::uuid, %s)",
+            (patient_id, profile),
+        )
+        conn.commit()
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def run(
@@ -490,17 +527,26 @@ def run(
     logger.info("Objetivo: %s", cfg["goal_statement"])
 
     with psycopg.connect(DATABASE_URL) as conn:
+        _ensure_contact_log_table(conn)
         patients = get_patients_by_profile(conn, profile, limit)
         logger.info("%d pacientes encontrados para perfil '%s'", len(patients), profile)
 
         enviados = 0
         erros    = 0
+        pulados  = 0
 
         for p in patients:
             nome      = p["display_name"] or "Paciente"
             phone_raw = p["phone"]
             phone     = formatar_phone(phone_raw)
             dias      = p.get("days_inactive")
+            pid       = str(p["id"])
+
+            # Deduplicação: pula se já contactado hoje neste perfil
+            if _already_contacted_today(conn, pid, profile):
+                logger.info("PULADO (já contactado hoje): %s | perfil=%s", nome, profile)
+                pulados += 1
+                continue
 
             prontuario = get_prontuario(conn, p["id"])
             # Cruza dados clínicos reais (plano alimentar + QPC + metas)
@@ -517,20 +563,9 @@ def run(
             if not dry_run:
                 try:
                     sid, status = enviar_twilio(phone, mensagem)
+                    _log_contact(conn, pid, profile)
                     logger.info("ENVIADO: sid=%s status=%s", sid, status)
                     enviados += 1
-                    # Registra envio para deduplicação — impede reenvio no mesmo dia
-                    with conn.cursor() as _cur:
-                        _cur.execute(
-                            """
-                            INSERT INTO inbound_messages
-                              (patient_id, phone, message_type, reply_body, replied_at)
-                            VALUES (%s, %s, 'hermes_outbound', %s, NOW())
-                            ON CONFLICT DO NOTHING
-                            """,
-                            (str(p["id"]), phone, mensagem[:500]),
-                        )
-                        conn.commit()
                 except Exception as exc:
                     logger.error("ERRO ao enviar: %s", exc)
                     erros += 1
@@ -539,8 +574,8 @@ def run(
                 logger.info("DRY RUN — não enviado")
 
     logger.info(
-        "Hermes concluído: enviados=%d erros=%d dry_run=%s",
-        enviados, erros, dry_run,
+        "Hermes concluído: enviados=%d erros=%d pulados=%d dry_run=%s",
+        enviados, erros, pulados, dry_run,
     )
 
 
