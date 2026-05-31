@@ -19,6 +19,8 @@ import hmac
 import json
 import logging
 import os
+import random
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -134,6 +136,20 @@ class UpdateD4SignRequest(BaseModel):
     d4sign_token_api: str
     d4sign_crypt_key: str
     d4sign_safe_uuid: str
+
+
+class StartConsultationRequest(BaseModel):
+    patient_id: str
+    patient_phone: str
+    patient_name: str
+
+
+class ConfirmReactivationRequest(BaseModel):
+    patient_id: str
+
+
+class ConfirmScheduledRequest(BaseModel):
+    patient_id: str
 
 
 # ── Endpoints de autenticação ─────────────────────────────────────────────────
@@ -357,6 +373,119 @@ def setup_nutri(
     }
 
 
+@router.post("/start-consultation")
+def start_consultation(
+    body: StartConsultationRequest,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    payload = _auth(request, settings)
+    nutri_id = int(payload["sub"])
+
+    slug = re.sub(r"[^a-z0-9]+", "-", body.patient_name.lower()).strip("-")[:30]
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d")
+    suffix = "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=4))
+    room_name = f"nd-{slug}-{ts}-{suffix}"
+    room_url = f"https://meet.nutrideby.com/{room_name}"
+
+    nutri_name = "Nutricionista"
+    try:
+        with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM professional_nutricionistas WHERE id = %s", (nutri_id,))
+                row = cur.fetchone()
+                if row:
+                    nutri_name = row["name"]
+    except Exception:
+        pass
+
+    if settings.twilio_account_sid and settings.twilio_auth_token and body.patient_phone:
+        try:
+            from twilio.rest import Client as TwilioClient  # noqa: PLC0415
+            twilio = TwilioClient(settings.twilio_account_sid, settings.twilio_auth_token)
+            phone = body.patient_phone if body.patient_phone.startswith("whatsapp:") else f"whatsapp:{body.patient_phone}"
+            twilio.messages.create(
+                from_=settings.twilio_from_number,
+                body=f"Sua consulta com a Dra. {nutri_name} está começando. Acesse: {room_url}",
+                to=phone,
+            )
+            logger.info("WhatsApp consulta enviado para %s room=%s", body.patient_phone, room_name)
+        except Exception as exc:
+            logger.warning("Falha ao enviar WhatsApp consulta: %s", exc)
+
+    return {"room_url": room_url, "room_name": room_name}
+
+
+@router.post("/confirm-reactivation")
+def confirm_reactivation(
+    body: ConfirmReactivationRequest,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    payload = _auth(request, settings)
+    _require_role(payload, "admin", "nutricionista")
+    nutri_id = int(payload["sub"])
+
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT name FROM professional_nutricionistas WHERE id = %s",
+                (nutri_id,),
+            )
+            nutri = cur.fetchone()
+            nutri_name = nutri["name"] if nutri else "Nutricionista"
+
+            cur.execute(
+                "SELECT display_name FROM patients WHERE id = %s",
+                (body.patient_id,),
+            )
+            patient = cur.fetchone()
+            if not patient:
+                raise HTTPException(status_code=404, detail="Paciente não encontrado")
+
+            now = datetime.now(timezone.utc)
+            cur.execute(
+                """UPDATE patients SET
+                       reactivation_stage = 'reactivated',
+                       reactivation_date = %s,
+                       reactivation_confirmed_by = %s,
+                       subscription_status = 'active',
+                       updated_at = NOW()
+                   WHERE id = %s""",
+                (now, nutri_name, body.patient_id),
+            )
+            conn.commit()
+
+    logger.info("Reativação confirmada: patient=%s por nutri=%s", body.patient_id, nutri_name)
+    return {
+        "success": True,
+        "patient_name": patient["display_name"],
+        "reactivation_date": now.isoformat(),
+    }
+
+
+@router.post("/confirm-scheduled")
+def confirm_scheduled(
+    body: ConfirmScheduledRequest,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    payload = _auth(request, settings)
+    _require_role(payload, "admin", "nutricionista")
+
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE patients SET reactivation_stage = 'scheduled', updated_at = NOW() WHERE id = %s",
+                (body.patient_id,),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Paciente não encontrado")
+            conn.commit()
+
+    return {"success": True}
+
+
 @router.post("/update-d4sign")
 def update_d4sign(
     body: UpdateD4SignRequest,
@@ -394,9 +523,14 @@ def list_pending(request: Request, settings: Annotated[Settings, Depends(get_set
                 SELECT cr.id, cr.patient_id, cr.status, cr.d4sign_status,
                        cr.created_at, cr.signing_initiated_at,
                        p.display_name AS patient_name,
-                       cr.extracted_biochemistry
+                       cr.extracted_biochemistry,
+                       pp.phone AS patient_phone
                 FROM clinical_records cr
                 LEFT JOIN patients p ON p.id = cr.patient_id
+                LEFT JOIN LATERAL (
+                    SELECT phone FROM patient_phones
+                    WHERE patient_id = p.id ORDER BY created_at LIMIT 1
+                ) pp ON true
                 WHERE cr.status = 'PENDENTE'
                 ORDER BY cr.created_at DESC
                 """,
@@ -412,6 +546,7 @@ def list_pending(request: Request, settings: Annotated[Settings, Depends(get_set
             "id": r["id"],
             "patient_id": str(r["patient_id"]),
             "patient_name": r.get("patient_name") or "Paciente",
+            "patient_phone": r.get("patient_phone") or "",
             "status": r["status"],
             "d4sign_status": r.get("d4sign_status") or "NONE",
             "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
@@ -440,10 +575,15 @@ def list_all_records(
                 SELECT cr.id, cr.patient_id, cr.status, cr.d4sign_status,
                        cr.created_at, cr.signed_at, cr.pdf_url, cr.d4sign_signed_pdf_url,
                        p.display_name AS patient_name,
-                       pn.name AS nutricionista_name
+                       pn.name AS nutricionista_name,
+                       pp.phone AS patient_phone
                 FROM clinical_records cr
                 LEFT JOIN patients p ON p.id = cr.patient_id
                 LEFT JOIN professional_nutricionistas pn ON pn.id = cr.nutricionista_id
+                LEFT JOIN LATERAL (
+                    SELECT phone FROM patient_phones
+                    WHERE patient_id = p.id ORDER BY created_at LIMIT 1
+                ) pp ON true
                 {where}
                 ORDER BY cr.created_at DESC LIMIT 100
             """
@@ -461,6 +601,7 @@ def list_all_records(
                 "id": r["id"],
                 "patient_id": str(r["patient_id"]),
                 "patient_name": r.get("patient_name") or "Paciente",
+                "patient_phone": r.get("patient_phone") or "",
                 "nutricionista": r.get("nutricionista_name") or "—",
                 "status": r["status"],
                 "d4sign_status": r.get("d4sign_status") or "NONE",
@@ -554,6 +695,124 @@ def initiate_signing(
     }
 
 
+@router.get("/patients")
+def list_patients(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    status: str | None = None,
+    q: str | None = None,
+) -> dict:
+    """Lista todos os pacientes com dados reais para o painel da nutricionista."""
+    _auth(request, settings)
+
+    filters = ["p.display_name IS NOT NULL"]
+    params: list = []
+
+    if status and status != "todos":
+        filters.append("p.subscription_status = %s")
+        params.append(status)
+
+    if q:
+        filters.append("(p.display_name ILIKE %s OR p.email ILIKE %s OR pp.phone LIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+
+    where = "WHERE " + " AND ".join(filters)
+
+    sql = f"""
+        SELECT
+            p.id,
+            p.display_name,
+            p.email,
+            p.subscription_status,
+            p.current_streak,
+            p.longest_streak,
+            p.last_logged_date,
+            p.deby_level,
+            p.deby_xp,
+            p.goal_statement,
+            p.created_at,
+            p.reactivation_stage,
+            p.reactivation_date,
+            p.reactivation_confirmed_by,
+            pp.phone,
+            (SELECT COUNT(*) FROM food_logs fl WHERE fl.patient_id = p.id) AS logs_total,
+            (SELECT COUNT(*) FROM clinical_records cr WHERE cr.patient_id = p.id) AS prontuarios,
+            (SELECT COUNT(*) FROM inbound_messages im WHERE im.patient_id = p.id) AS mensagens,
+            (SELECT fase FROM padroes_alimentares pa WHERE pa.patient_id = p.id ORDER BY pa.data_deteccao DESC LIMIT 1) AS padrao_fase
+        FROM patients p
+        LEFT JOIN LATERAL (
+            SELECT phone FROM patient_phones
+            WHERE patient_id = p.id ORDER BY created_at LIMIT 1
+        ) pp ON true
+        {where}
+        ORDER BY
+            CASE p.subscription_status
+                WHEN 'active' THEN 1
+                WHEN 'trial'  THEN 2
+                ELSE 3
+            END,
+            p.last_logged_date DESC NULLS LAST,
+            p.display_name
+        LIMIT 500
+    """
+
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+    _STATUS_LABEL = {
+        "active": "Ativo", "trial": "Trial", "inactive": "Inativo",
+        "cancelled": "Cancelado", "pending": "Pendente",
+    }
+    _FASE_COR = {
+        "ESCAPE": "#f59e0b", "CONFRONTO": "#ef4444",
+        "RETORNO": "#8b5cf6", "CULPA": "#6366f1",
+    }
+
+    pacientes = []
+    for r in rows:
+        st = r.get("subscription_status") or "inactive"
+        fase = r.get("padrao_fase")
+        pacientes.append({
+            "id": str(r["id"]),
+            "nome": r.get("display_name") or "—",
+            "email": r.get("email") or "",
+            "phone": r.get("phone") or "",
+            "status": st,
+            "status_label": _STATUS_LABEL.get(st, st.title()),
+            "streak": r.get("current_streak") or 0,
+            "longest_streak": r.get("longest_streak") or 0,
+            "last_logged": r["last_logged_date"].isoformat() if r.get("last_logged_date") else None,
+            "level": r.get("deby_level") or 1,
+            "xp": r.get("deby_xp") or 0,
+            "goal": r.get("goal_statement") or "",
+            "logs": r.get("logs_total") or 0,
+            "prontuarios": r.get("prontuarios") or 0,
+            "mensagens": r.get("mensagens") or 0,
+            "fase": fase,
+            "fase_cor": _FASE_COR.get(fase, "") if fase else "",
+            "criado_em": r["created_at"].isoformat() if r.get("created_at") else None,
+            "reactivation_stage": r.get("reactivation_stage"),
+            "reactivation_date": r["reactivation_date"].isoformat() if r.get("reactivation_date") else None,
+            "reactivation_confirmed_by": r.get("reactivation_confirmed_by"),
+        })
+
+    resumo = {
+        "total": len(pacientes),
+        "ativos": sum(1 for p in pacientes if p["status"] == "active"),
+        "trial": sum(1 for p in pacientes if p["status"] == "trial"),
+        "inativos": sum(1 for p in pacientes if p["status"] not in ("active", "trial")),
+        "com_telefone": sum(1 for p in pacientes if p["phone"]),
+        "responded_count": sum(1 for p in pacientes if p["reactivation_stage"] == "responded"),
+        "scheduled_count": sum(1 for p in pacientes if p["reactivation_stage"] == "scheduled"),
+        "reactivated_count": sum(1 for p in pacientes if p["reactivation_stage"] == "reactivated"),
+    }
+
+    return {"resumo": resumo, "pacientes": pacientes}
+
+
 @router.post("/d4sign-webhook")
 async def d4sign_webhook(request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> dict:
     try:
@@ -621,7 +880,10 @@ def grid_padroes(
                     pa.degradacao_nivel,
                     pa.alimentos_gatilho,
                     pa.data_deteccao,
-                    pa.acao_prescrita
+                    pa.acao_prescrita,
+                    pp.phone,
+                    p.reactivation_stage,
+                    p.reactivation_confirmed_by
                 FROM patients p
                 LEFT JOIN LATERAL (
                     SELECT fase, ciclo_numero, degradacao_nivel,
@@ -631,6 +893,10 @@ def grid_padroes(
                     ORDER BY data_deteccao DESC
                     LIMIT 1
                 ) pa ON true
+                LEFT JOIN LATERAL (
+                    SELECT phone FROM patient_phones
+                    WHERE patient_id = p.id ORDER BY created_at LIMIT 1
+                ) pp ON true
                 WHERE p.display_name IS NOT NULL
                 ORDER BY
                     CASE pa.fase
@@ -678,8 +944,11 @@ def grid_padroes(
         pacientes.append({
             "id": str(r["id"]),
             "nome": r["display_name"],
+            "phone": r.get("phone") or "",
             "streak": r["current_streak"] or 0,
             "ultimo_registro": r["last_logged_date"].isoformat() if r.get("last_logged_date") else None,
+            "reactivation_stage": r.get("reactivation_stage"),
+            "reactivation_confirmed_by": r.get("reactivation_confirmed_by"),
             "padrao": {
                 "fase": fase,
                 "ciclo": r.get("ciclo_numero"),
@@ -702,6 +971,11 @@ def grid_padroes(
         "resumo": {
             fase: sum(1 for p in com_padrao if p["padrao"]["fase"] == fase)
             for fase in ["ESCAPE", "CONFRONTO", "RETORNO", "CULPA"]
+        },
+        "reativacao": {
+            "responded": sum(1 for p in pacientes if p["reactivation_stage"] == "responded"),
+            "scheduled": sum(1 for p in pacientes if p["reactivation_stage"] == "scheduled"),
+            "reactivated": sum(1 for p in pacientes if p["reactivation_stage"] == "reactivated"),
         },
         "pacientes": pacientes,
     }
@@ -740,429 +1014,798 @@ _PANEL_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="alternate icon" href="/favicon.ico">
-<title>NutriDeby — Painel</title>
+<title>NutriDeby — Painel Clínico</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:#f0fdf4;color:#1e293b;min-height:100vh}
-header{background:#059669;color:#fff;padding:16px 24px;display:flex;align-items:center;gap:12px}
-header h1{font-size:1.3rem;font-weight:700}
-#hname{font-size:.85rem;opacity:.85;margin-left:auto}
-#hrole{font-size:.75rem;background:rgba(255,255,255,.2);padding:2px 10px;border-radius:20px;margin-left:8px}
-.wrap{display:flex;align-items:center;justify-content:center;min-height:90vh}
-.card{background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.08);padding:32px;width:100%;max-width:400px}
-.card h2{font-size:1.1rem;color:#059669;margin-bottom:4px}
-.card p.sub{font-size:.82rem;color:#94a3b8;margin-bottom:20px}
-label{display:block;font-size:.78rem;color:#64748b;margin-bottom:4px;margin-top:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-input{width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:.95rem;outline:none;transition:border .2s}
-input:focus{border-color:#059669}
-.btn{width:100%;margin-top:18px;padding:12px;background:#059669;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;transition:background .2s}
-.btn:hover{background:#047857}
-.btn:disabled{background:#94a3b8;cursor:not-allowed}
-.btn-sm{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:.8rem;font-weight:600}
-.btn-outline{background:#f1f5f9;color:#475569;padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-size:.85rem;font-weight:600}
-.btn-outline:hover{background:#e2e8f0}
-.err{color:#dc2626;font-size:.82rem;margin-top:8px}
-.link{color:#059669;font-size:.82rem;cursor:pointer;background:none;border:none;text-decoration:underline;margin-top:10px;display:block;text-align:center}
-#main{padding:24px;max-width:1040px;margin:0 auto}
-.nutri-bar{background:#ecfdf5;border:1px solid #6ee7b7;border-radius:10px;padding:10px 16px;margin-bottom:18px;display:flex;align-items:center;gap:8px}
-.nutri-bar strong{color:#065f46}
-.tabs{display:flex;gap:8px;margin-bottom:16px}
-.tab{padding:8px 18px;border-radius:8px;border:none;cursor:pointer;font-size:.85rem;font-weight:600;background:#e2e8f0;color:#475569}
-.tab.active{background:#059669;color:#fff}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06)}
-th{background:#ecfdf5;color:#065f46;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;padding:10px 14px;text-align:left}
-td{padding:10px 14px;border-top:1px solid #f1f5f9;font-size:.88rem;vertical-align:middle}
-tr:hover td{background:#f8fffe}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.73rem;font-weight:700}
-.b-pend{background:#fef9c3;color:#854d0e}
-.b-sign{background:#dbeafe;color:#1e40af}
-.b-ok{background:#dcfce7;color:#166534}
-.flag-a{color:#dc2626;font-size:.75rem;font-weight:700}
-.flag-b{color:#d97706;font-size:.75rem;font-weight:700}
-.empty{text-align:center;padding:48px;color:#94a3b8;font-size:.95rem}
-.grid-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
-.sum-card{border-radius:10px;padding:14px 16px;text-align:center;border:1px solid transparent;cursor:pointer;transition:transform .15s}
-.sum-card:hover{transform:translateY(-2px)}
-.sum-card .num{font-size:2rem;font-weight:800;line-height:1}
-.sum-card .lbl{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
-.sum-card .sub{font-size:.7rem;color:#64748b;margin-top:2px}
-.sc-escape{background:#fffbeb;border-color:#fcd34d}.sc-escape .num{color:#d97706}
-.sc-confronto{background:#fef2f2;border-color:#fca5a5}.sc-confronto .num{color:#dc2626}
-.sc-retorno{background:#f5f3ff;border-color:#c4b5fd}.sc-retorno .num{color:#7c3aed}
-.sc-culpa{background:#eef2ff;border-color:#a5b4fc}.sc-culpa .num{color:#4f46e5}
-.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
-.pcard{background:#fff;border-radius:10px;border:1.5px solid #e2e8f0;padding:14px 14px 14px 18px;transition:box-shadow .15s;position:relative;overflow:hidden}
-.pcard:hover{box-shadow:0 4px 16px rgba(0,0,0,.08)}
-.pcard .fase-bar{position:absolute;top:0;left:0;width:4px;height:100%}
-.pcard .pnome{font-weight:700;font-size:.92rem;color:#1e293b;margin-bottom:6px}
-.pcard .pfase{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:700;margin-bottom:8px}
-.pcard .pinfo{font-size:.78rem;color:#64748b;line-height:1.6}
-.pcard .pacao{margin-top:8px;padding:6px 8px;border-radius:6px;font-size:.75rem;font-weight:600;background:#f8fafc;color:#475569;border-left:3px solid #e2e8f0}
-.pcard .pciclo{font-size:.7rem;color:#94a3b8;margin-top:6px}
-.fase-escape  .fase-bar{background:#f59e0b}
-.fase-confronto .fase-bar{background:#ef4444}
-.fase-retorno .fase-bar{background:#8b5cf6}
-.fase-culpa   .fase-bar{background:#6366f1}
-.fase-sem     .fase-bar{background:#e2e8f0}
-.pfase-escape{background:#fffbeb;color:#b45309}
-.pfase-confronto{background:#fef2f2;color:#b91c1c}
-.pfase-retorno{background:#f5f3ff;color:#6d28d9}
-.pfase-culpa{background:#eef2ff;color:#4338ca}
-.grid-filter{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
-.gf-btn{padding:5px 14px;border-radius:20px;border:1.5px solid #e2e8f0;background:#fff;font-size:.78rem;font-weight:600;cursor:pointer;color:#64748b;transition:all .15s}
-.gf-todos.on{color:#059669;background:#ecfdf5;border-color:#059669}
-.gf-escape.on{color:#d97706;background:#fffbeb;border-color:#fcd34d}
-.gf-confronto.on{color:#dc2626;background:#fef2f2;border-color:#fca5a5}
-.gf-retorno.on{color:#7c3aed;background:#f5f3ff;border-color:#c4b5fd}
-.gf-culpa.on{color:#4f46e5;background:#eef2ff;border-color:#a5b4fc}
-.empty-grid{text-align:center;padding:48px;color:#94a3b8;grid-column:1/-1}
-.deg-dot{font-size:.65rem;letter-spacing:1px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:#F7F6F3;color:#1C1C1A;min-height:100vh;font-size:14px;line-height:1.5}
 
-#toast{position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:12px 20px;border-radius:8px;font-size:.88rem;display:none;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.2)}
-.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:center;justify-content:center}
-.modal-bg.open{display:flex}
-.modal{background:#fff;border-radius:12px;padding:28px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.15)}
-.modal h3{font-size:1rem;color:#1e293b;margin-bottom:16px}
-.sec-title{font-size:1.05rem;font-weight:700;color:#065f46;margin-bottom:12px}
+/* ── Login ── */
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.login-card{background:#fff;border:1px solid #E8E5DF;border-radius:12px;padding:40px;width:100%;max-width:380px;box-shadow:0 1px 6px rgba(0,0,0,.05)}
+.login-brand{margin-bottom:28px}
+.login-brand-name{font-size:18px;font-weight:700;color:#1A5C35;letter-spacing:-.3px}
+.login-brand-sub{font-size:13px;color:#6B6860;margin-top:2px}
+.login-title{font-size:18px;font-weight:700;color:#1C1C1A;margin-bottom:4px}
+.login-sub{font-size:13px;color:#6B6860;margin-bottom:24px}
+.form-field{margin-bottom:14px}
+.form-field label{display:block;font-size:11px;font-weight:600;color:#6B6860;letter-spacing:.4px;margin-bottom:5px;text-transform:uppercase}
+.form-field input{width:100%;padding:9px 12px;border:1px solid #E8E5DF;border-radius:7px;font-size:14px;font-family:inherit;outline:none;color:#1C1C1A;background:#fff;transition:border-color .15s}
+.form-field input:focus{border-color:#1A5C35;box-shadow:0 0 0 3px rgba(26,92,53,.08)}
+.btn-primary{width:100%;padding:10px;background:#1A5C35;color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s;margin-top:4px}
+.btn-primary:hover{background:#154e2e}
+.btn-primary:disabled{background:#9CA3AF;cursor:not-allowed}
+.btn-link{background:none;border:none;color:#1A5C35;font-size:13px;cursor:pointer;font-family:inherit;padding:0;text-decoration:underline;display:block;text-align:center;margin-top:14px}
+.err-msg{font-size:12px;color:#C0392B;margin-top:8px}
+
+/* ── App shell ── */
+.app-header{background:#fff;border-bottom:1px solid #E8E5DF;padding:0 28px;height:56px;display:flex;align-items:center;position:sticky;top:0;z-index:50}
+.header-brand{display:flex;align-items:center;gap:0}
+.header-wordmark{font-size:15px;font-weight:700;color:#1A5C35;letter-spacing:-.2px}
+.header-sep{width:1px;height:16px;background:#E8E5DF;margin:0 12px}
+.header-sub{font-size:13px;color:#6B6860}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:16px}
+.header-nutri-name{font-size:13px;color:#1C1C1A;font-weight:500}
+.btn-session{padding:6px 14px;background:none;border:1px solid #E8E5DF;border-radius:6px;font-size:12px;font-family:inherit;color:#6B6860;cursor:pointer;transition:all .15s}
+.btn-session:hover{border-color:#C0392B;color:#C0392B}
+
+/* ── Alert bar ── */
+.alert-bar{background:#FEF9EC;border-bottom:1px solid #F5DFA0;padding:10px 28px;display:flex;align-items:center;gap:12px}
+.alert-dot{width:7px;height:7px;border-radius:50%;background:#D4850A;flex-shrink:0}
+.alert-text{font-size:13px;color:#8A5C00;flex:1;font-weight:500}
+.alert-dismiss{background:none;border:none;color:#8A5C00;cursor:pointer;font-size:20px;line-height:1;padding:0 4px;opacity:.6;font-family:inherit}
+.alert-dismiss:hover{opacity:1}
+
+/* ── Body ── */
+.app-body{padding:24px 28px;max-width:1120px;margin:0 auto}
+
+/* ── Metrics ── */
+.metrics-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.metric-card{background:#fff;border:1px solid #E8E5DF;border-radius:10px;padding:16px 18px}
+.metric-card.clickable{cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.metric-card.clickable:hover{border-color:#1A5C35;box-shadow:0 0 0 3px rgba(26,92,53,.06)}
+.metric-value{font-size:28px;font-weight:700;color:#1C1C1A;letter-spacing:-.8px;line-height:1}
+.metric-value.amber{color:#D4850A}
+.metric-value.red{color:#C0392B}
+.metric-label{font-size:12px;color:#6B6860;margin-top:5px}
+
+/* ── Tabs ── */
+.tabs-bar{display:flex;gap:0;border-bottom:1px solid #E8E5DF;margin-bottom:24px}
+.tab-btn{padding:10px 18px;background:none;border:none;border-bottom:2px solid transparent;font-size:13px;font-weight:500;font-family:inherit;color:#6B6860;cursor:pointer;margin-bottom:-1px;transition:all .15s;white-space:nowrap}
+.tab-btn:hover{color:#1C1C1A}
+.tab-btn.active{color:#1A5C35;border-bottom-color:#1A5C35;font-weight:600}
+
+/* ── Patient list & cards ── */
+.patient-list{display:flex;flex-direction:column;gap:8px}
+.patient-card{background:#fff;border:1px solid #E8E5DF;border-radius:10px;display:flex;align-items:stretch;overflow:hidden;transition:box-shadow .15s}
+.patient-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.07)}
+.pc-accent{width:3px;flex-shrink:0}
+.pc-accent.red{background:#C0392B}
+.pc-accent.amber{background:#D4850A}
+.pc-accent.safe{background:#2D7A4A}
+.pc-accent.blue{background:#4A6FA5}
+.pc-body{flex:1;padding:14px 18px;min-width:0}
+.pc-actions{padding:14px 16px;display:flex;flex-direction:column;gap:6px;justify-content:center;border-left:1px solid #F0EDE8;flex-shrink:0}
+.pc-name{font-size:14px;font-weight:600;color:#1C1C1A;margin-bottom:5px}
+.pc-meta{font-size:12px;color:#6B6860;line-height:1.9}
+.pc-meta span{display:block}
+
+/* ── Action buttons ── */
+.btn-consult{padding:7px 14px;background:#1A5C35;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;white-space:nowrap;transition:background .15s}
+.btn-consult:hover{background:#154e2e}
+.btn-msg{padding:7px 14px;background:#fff;color:#1C1C1A;border:1px solid #E8E5DF;border-radius:6px;font-size:12px;font-weight:500;font-family:inherit;cursor:pointer;white-space:nowrap;transition:all .15s}
+.btn-msg:hover{border-color:#1A5C35;color:#1A5C35}
+.btn-ghost{padding:7px 14px;background:none;color:#6B6860;border:none;border-radius:6px;font-size:12px;font-weight:500;font-family:inherit;cursor:pointer;white-space:nowrap;transition:color .15s}
+.btn-ghost:hover{color:#1C1C1A}
+
+/* ── Padroes tab ── */
+.pattern-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.pat-sum{background:#fff;border:1px solid #E8E5DF;border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:border-color .15s}
+.pat-sum:hover{border-color:#1C1C1A}
+.pat-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dot-escape{background:#D4850A}
+.dot-confronto{background:#C0392B}
+.dot-retorno{background:#4A6FA5}
+.dot-culpa{background:#6B6860}
+.pat-sum .ps-num{font-size:22px;font-weight:700;color:#1C1C1A;line-height:1}
+.pat-sum .ps-lbl{font-size:11px;color:#6B6860;margin-top:3px}
+.patterns-filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.filter-btn{padding:5px 14px;background:#fff;border:1px solid #E8E5DF;border-radius:20px;font-size:12px;font-weight:500;font-family:inherit;color:#6B6860;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .15s}
+.filter-btn:hover{border-color:#1C1C1A;color:#1C1C1A}
+.filter-btn.active{background:#1C1C1A;color:#fff;border-color:#1C1C1A}
+.filter-btn .fd{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.trigger-tag{display:inline-block;padding:2px 7px;background:#F0EDE8;border-radius:4px;font-size:11px;color:#6B6860;margin:2px 2px 2px 0}
+
+/* ── Consultas tab ── */
+.section-label{font-size:11px;font-weight:600;color:#6B6860;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.rec-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #E8E5DF;border-radius:10px;overflow:hidden;margin-bottom:24px}
+.rec-table th{background:#F7F6F3;font-size:11px;font-weight:600;color:#6B6860;text-transform:uppercase;letter-spacing:.4px;padding:10px 14px;text-align:left;border-bottom:1px solid #E8E5DF}
+.rec-table td{padding:11px 14px;font-size:13px;border-bottom:1px solid #F7F6F3;vertical-align:middle}
+.rec-table tr:last-child td{border-bottom:none}
+.rec-table tr:hover td{background:#FAFAF8}
+.badge{display:inline-block;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:600}
+.badge-pend{background:#FEF9EC;color:#8A5C00}
+.badge-ok{background:#F0FAF4;color:#1A5C35}
+.badge-wait{background:#EEF2FF;color:#4A6FA5}
+.rec-btn{padding:5px 12px;background:#1A5C35;color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer}
+.rec-btn:disabled{background:#D1D5DB;cursor:not-allowed}
+
+/* ── Reactivation badges ── */
+.rbadge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-bottom:5px}
+.rb-responded{background:#FEF9EC;color:#8A5C00;border:1px solid #F9D27D}
+.rb-scheduled{background:#EEF2FF;color:#3B54A8;border:1px solid #A5B4FC}
+.rb-reactivated{background:#F0FAF4;color:#1A5C35;border:1px solid #6EE7B7}
+.btn-sched{padding:7px 14px;background:#3B54A8;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;white-space:nowrap;transition:background .15s}
+.btn-sched:hover{background:#2D3F85}
+.btn-react{padding:7px 14px;background:#2D7A4A;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;white-space:nowrap;transition:background .15s}
+.btn-react:hover{background:#1A5C35}
+
+/* ── Jitsi modal ── */
+.jitsi-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:200;align-items:center;justify-content:center;flex-direction:column;gap:14px}
+.jitsi-bg.open{display:flex}
+.jitsi-hdr{display:flex;align-items:center;justify-content:space-between;width:92vw}
+.jitsi-title{font-size:14px;font-weight:600;color:#fff;letter-spacing:-.1px}
+.jitsi-close{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:#fff;width:32px;height:32px;border-radius:7px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;line-height:1;font-family:inherit;transition:background .15s}
+.jitsi-close:hover{background:rgba(255,255,255,.22)}
+.jitsi-frame{width:92vw;height:88vh;border:none;border-radius:10px}
+
+/* ── Prontuario modal ── */
+.pron-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:150;align-items:center;justify-content:center}
+.pron-bg.open{display:flex}
+.pron-modal{background:#fff;border-radius:12px;padding:28px;width:100%;max-width:480px;max-height:82vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.14)}
+.pron-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
+.pron-close{background:none;border:none;cursor:pointer;font-size:20px;color:#6B6860;padding:0;line-height:1;font-family:inherit}
+.pron-section{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #F0EDE8}
+.pron-section:last-of-type{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.pron-label{font-size:11px;font-weight:600;color:#6B6860;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+.pron-value{font-size:14px;color:#1C1C1A}
+
+/* ── Empty state ── */
+.empty-state{text-align:center;padding:56px 24px}
+.empty-title{font-size:15px;font-weight:600;color:#1C1C1A;margin-bottom:6px}
+.empty-sub{font-size:13px;color:#6B6860}
+
+/* ── Toast ── */
+#toast{position:fixed;bottom:24px;right:24px;background:#1C1C1A;color:#fff;padding:11px 18px;border-radius:8px;font-size:13px;display:none;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,.18);max-width:340px;line-height:1.4}
+#toast.err{background:#C0392B}
+#toast.ok{background:#2D7A4A}
 </style>
 </head>
 <body>
 
-<header>
-  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
-  <h1>NutriDeby</h1>
-  <span id="hname"></span><span id="hrole"></span>
-</header>
-
 <!-- ── LOGIN ── -->
-<div class="wrap" id="vLogin">
-  <div class="card" id="formLogin">
-    <h2>Entrar no Painel</h2>
-    <p class="sub">Acesso exclusivo para nutricionistas</p>
-    <label>E-mail profissional</label>
-    <input type="email" id="lEmail" placeholder="dra@clinica.com.br" autocomplete="email"/>
-    <label>Senha</label>
-    <input type="password" id="lPass" placeholder="••••••••" autocomplete="current-password"/>
-    <button class="btn" id="btnLogin" onclick="doLogin()">Entrar</button>
-    <button class="link" onclick="showForgot()">Esqueci minha senha</button>
-    <p class="err" id="lErr"></p>
+<div class="login-wrap" id="vLogin">
+  <div id="frmLogin" class="login-card">
+    <div class="login-brand">
+      <div class="login-brand-name">NutriDeby</div>
+      <div class="login-brand-sub">Painel Clínico</div>
+    </div>
+    <div class="login-title">Entrar</div>
+    <div class="login-sub">Acesso exclusivo para profissionais</div>
+    <div class="form-field"><label>E-mail profissional</label><input type="email" id="lEmail" placeholder="dra@clinica.com.br" autocomplete="email"/></div>
+    <div class="form-field"><label>Senha</label><input type="password" id="lPass" placeholder="••••••••" autocomplete="current-password"/></div>
+    <button class="btn-primary" id="btnLogin" onclick="doLogin()">Entrar</button>
+    <button class="btn-link" onclick="showForgot()">Esqueci minha senha</button>
+    <div class="err-msg" id="lErr"></div>
   </div>
 
-  <!-- Esqueci senha -->
-  <div class="card" id="formForgot" style="display:none">
-    <h2>Esqueci minha senha</h2>
-    <p class="sub">Enviaremos um link de redefinição para seu e-mail</p>
-    <label>E-mail profissional</label>
-    <input type="email" id="fEmail" placeholder="dra@clinica.com.br"/>
-    <button class="btn" onclick="doForgot()">Enviar link</button>
-    <button class="link" onclick="showLogin()">← Voltar ao login</button>
-    <p class="err" id="fMsg"></p>
+  <div id="frmForgot" class="login-card" style="display:none">
+    <div class="login-brand"><div class="login-brand-name">NutriDeby</div><div class="login-brand-sub">Painel Clínico</div></div>
+    <div class="login-title">Redefinir senha</div>
+    <div class="login-sub">Enviaremos um link de redefinição para seu e-mail</div>
+    <div class="form-field"><label>E-mail profissional</label><input type="email" id="fEmail" placeholder="dra@clinica.com.br"/></div>
+    <button class="btn-primary" onclick="doForgot()">Enviar link</button>
+    <button class="btn-link" onclick="showLogin()">Voltar ao login</button>
+    <div class="err-msg" id="fMsg"></div>
   </div>
 
-  <!-- Criar senha (convite ou reset) -->
-  <div class="card" id="formSetPass" style="display:none">
-    <h2 id="setPassTitle">Criar senha</h2>
-    <p class="sub" id="setPassSub">Defina sua senha para acessar o painel</p>
-    <label>Nova senha (mín. 8 caracteres)</label>
-    <input type="password" id="spPass" placeholder="••••••••"/>
-    <label>Confirmar senha</label>
-    <input type="password" id="spPass2" placeholder="••••••••"/>
-    <button class="btn" onclick="doSetPass()">Salvar senha</button>
-    <p class="err" id="spErr"></p>
+  <div id="frmSetPass" class="login-card" style="display:none">
+    <div class="login-brand"><div class="login-brand-name">NutriDeby</div><div class="login-brand-sub">Painel Clínico</div></div>
+    <div class="login-title" id="setPassTitle">Criar senha</div>
+    <div class="login-sub" id="setPassSub">Defina sua senha para acessar o painel</div>
+    <div class="form-field"><label>Nova senha (mín. 8 caracteres)</label><input type="password" id="spPass" placeholder="••••••••"/></div>
+    <div class="form-field"><label>Confirmar senha</label><input type="password" id="spPass2" placeholder="••••••••"/></div>
+    <button class="btn-primary" onclick="doSetPass()">Salvar senha</button>
+    <div class="err-msg" id="spErr"></div>
   </div>
 </div>
 
 <!-- ── PAINEL PRINCIPAL ── -->
-<div id="main" style="display:none">
-  <div class="nutri-bar">
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-    <span>Bem-vinda, <strong id="mName"></strong></span>
-    <button class="btn-outline" style="margin-left:auto" onclick="doLogout()">Sair</button>
-  </div>
+<div id="vMain" style="display:none">
 
-  <div class="tabs">
-    <button class="tab active" id="tabBtnPend" onclick="showTab('pend')">Pendentes</button>
-    <button class="tab" id="tabBtnAll"  onclick="showTab('all')">Todos</button>
-    <button class="tab" id="tabBtnPad" onclick="showTab('pad')">🧠 Padrões</button>
-  </div>
-
-  <div id="tabPend">
-    <p class="sec-title">Prontuários aguardando assinatura</p>
-    <div id="tblPend"></div>
-  </div>
-  <div id="tabAll" style="display:none">
-    <p class="sec-title">Todos os prontuários</p>
-    <div id="tblAll"></div>
-  </div>
-
-  <div id="tabPad" style="display:none">
-    <p class="sec-title">Padrões Comportamentais — Visão Clínica</p>
-    <div id="gridSummary" class="grid-summary"></div>
-    <div class="grid-filter">
-      <button class="gf-btn gf-todos on" onclick="filterGrid('todos')">Todos</button>
-      <button class="gf-btn gf-escape" onclick="filterGrid('ESCAPE')">🌊 Escape</button>
-      <button class="gf-btn gf-confronto" onclick="filterGrid('CONFRONTO')">⚡ Confronto</button>
-      <button class="gf-btn gf-retorno" onclick="filterGrid('RETORNO')">🔄 Retorno</button>
-      <button class="gf-btn gf-culpa" onclick="filterGrid('CULPA')">💙 Culpa</button>
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="header-wordmark">NutriDeby</div>
+      <div class="header-sep"></div>
+      <div class="header-sub">Painel Clínico</div>
     </div>
-    <div id="gridPadroes" class="pgrid"></div>
+    <div class="header-right">
+      <div class="header-nutri-name" id="hNutriName"></div>
+      <button class="btn-session" onclick="doLogout()">Encerrar sessão</button>
+    </div>
+  </header>
+
+  <div class="alert-bar" id="alertBar" style="display:none">
+    <div class="alert-dot"></div>
+    <div class="alert-text" id="alertText"></div>
+    <button class="alert-dismiss" onclick="this.closest('.alert-bar').style.display='none'">&#xD7;</button>
+  </div>
+
+  <div class="app-body">
+
+    <div class="metrics-row">
+      <div class="metric-card">
+        <div class="metric-value" id="mTotal">—</div>
+        <div class="metric-label">Pacientes ativos</div>
+      </div>
+      <div class="metric-card clickable" onclick="switchTab('atencao')">
+        <div class="metric-value amber" id="mInativos">—</div>
+        <div class="metric-label">Inativos 7+ dias</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value" id="mPadroes">—</div>
+        <div class="metric-label">Padrões detectados</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value" id="mSemana">—</div>
+        <div class="metric-label">Prontuários esta semana</div>
+      </div>
+      <div class="metric-card clickable" onclick="switchTab('todos')">
+        <div class="metric-value amber" id="mResponded">—</div>
+        <div class="metric-label">Responderam (aguard. agendamento)</div>
+      </div>
+      <div class="metric-card clickable" onclick="switchTab('todos')">
+        <div class="metric-value" style="color:#3B54A8" id="mScheduled">—</div>
+        <div class="metric-label">Consulta agendada</div>
+      </div>
+      <div class="metric-card clickable" onclick="switchTab('todos')">
+        <div class="metric-value" style="color:#2D7A4A" id="mReactivated">—</div>
+        <div class="metric-label">Retorno confirmado</div>
+      </div>
+    </div>
+
+    <div class="tabs-bar">
+      <button class="tab-btn active" data-tab="atencao" onclick="switchTab('atencao')">Atenção</button>
+      <button class="tab-btn" data-tab="todos" onclick="switchTab('todos')">Todos os pacientes</button>
+      <button class="tab-btn" data-tab="padroes" onclick="switchTab('padroes')">Padrões clínicos</button>
+      <button class="tab-btn" data-tab="consultas" onclick="switchTab('consultas')">Consultas</button>
+    </div>
+
+    <div id="tabAtencao"></div>
+    <div id="tabTodos" style="display:none"></div>
+    <div id="tabPadroes" style="display:none"></div>
+    <div id="tabConsultas" style="display:none"></div>
+
+  </div>
+</div>
+
+<!-- ── JITSI MODAL ── -->
+<div class="jitsi-bg" id="modalJitsi">
+  <div class="jitsi-hdr">
+    <div class="jitsi-title" id="jitsiTitle">Consulta ao vivo</div>
+    <button class="jitsi-close" onclick="closeJitsi()">&#xD7;</button>
+  </div>
+  <iframe class="jitsi-frame" id="jitsiFrame" src="" allow="camera;microphone;fullscreen;display-capture" allowfullscreen></iframe>
+</div>
+
+<!-- ── PRONTUARIO MODAL ── -->
+<div class="pron-bg" id="modalPron">
+  <div class="pron-modal">
+    <div class="pron-header">
+      <div>
+        <div style="font-size:16px;font-weight:700;color:#1C1C1A" id="pName"></div>
+        <div style="font-size:12px;color:#6B6860;margin-top:3px" id="pSub"></div>
+      </div>
+      <button class="pron-close" onclick="closePron()">&#xD7;</button>
+    </div>
+    <div id="pContent"></div>
+    <div style="display:flex;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid #F0EDE8">
+      <button class="btn-consult" id="pBtnConsult" style="flex:1">Iniciar consulta</button>
+      <button class="btn-msg" id="pBtnMsg" style="flex:1">Mensagem</button>
+      <button class="btn-ghost" onclick="closePron()">Fechar</button>
+    </div>
   </div>
 </div>
 
 <div id="toast"></div>
 
 <script>
-let _tok = localStorage.getItem('nt'), _me = JSON.parse(localStorage.getItem('nm')||'null');
-const p = new URLSearchParams(location.search);
-const action = p.get('action'), token = p.get('token');
+'use strict';
+var _tok = localStorage.getItem('nt');
+var _me = null;
+try { _me = JSON.parse(localStorage.getItem('nm') || 'null'); } catch(e) {}
+var _grid = [];
+var _records = [];
+var _pending = [];
+var _currentTab = 'atencao';
 
-if (action === 'invite' && token) {
+var _qp = new URLSearchParams(location.search);
+var _action = _qp.get('action'), _token = _qp.get('token');
+
+if (_action === 'invite' && _token) {
   showSetPass('Criar senha', 'Bem-vinda! Defina sua senha para acessar o painel.', 'invite');
-} else if (action === 'reset' && token) {
+} else if (_action === 'reset' && _token) {
   showSetPass('Redefinir senha', 'Digite sua nova senha abaixo.', 'reset');
 } else if (_tok && _me) {
   showMain();
 }
 
+/* ── Auth UI ─────────────────────────────────── */
 function showLogin() {
-  hide('formForgot'); hide('formSetPass'); show('formLogin'); show('vLogin'); hide('main');
+  hide('frmForgot'); hide('frmSetPass'); show('frmLogin');
+  show('vLogin'); hide('vMain');
 }
-function showForgot() { hide('formLogin'); hide('formSetPass'); show('formForgot'); }
+function showForgot() { hide('frmLogin'); hide('frmSetPass'); show('frmForgot'); }
 function showSetPass(title, sub, mode) {
-  hide('formLogin'); hide('formForgot');
   $('setPassTitle').textContent = title;
   $('setPassSub').textContent = sub;
-  show('vLogin'); show('formSetPass'); hide('formLogin'); hide('formForgot');
+  hide('frmLogin'); hide('frmForgot'); show('frmSetPass');
+  show('vLogin'); hide('vMain');
   document.body.dataset.spMode = mode;
 }
 
 async function doLogin() {
-  const btn = $('btnLogin'); btn.disabled = true; btn.textContent = 'Entrando…';
+  var btn = $('btnLogin');
+  btn.disabled = true; btn.textContent = 'Entrando...';
   $('lErr').textContent = '';
   try {
-    const r = await api('/api/nutri/login', {email:$v('lEmail'), password:$v('lPass')});
+    var r = await apiPost('/api/nutri/login', {email: $v('lEmail'), password: $v('lPass')});
     _tok = r.access_token; _me = r.nutricionista;
-    localStorage.setItem('nt', _tok); localStorage.setItem('nm', JSON.stringify(_me));
+    localStorage.setItem('nt', _tok);
+    localStorage.setItem('nm', JSON.stringify(_me));
     showMain();
   } catch(e) { $('lErr').textContent = e.message; }
-  btn.disabled=false; btn.textContent='Entrar';
+  btn.disabled = false; btn.textContent = 'Entrar';
 }
 
 async function doForgot() {
-  $('fMsg').textContent='';
+  $('fMsg').textContent = '';
   try {
-    const r = await api('/api/nutri/forgot-password', {email:$v('fEmail')});
-    $('fMsg').style.color='#059669';
+    var r = await apiPost('/api/nutri/forgot-password', {email: $v('fEmail')});
+    $('fMsg').style.color = '#2D7A4A';
     $('fMsg').textContent = r.message;
-  } catch(e) { $('fMsg').textContent = e.message; }
+  } catch(e) { $('fMsg').style.color = '#C0392B'; $('fMsg').textContent = e.message; }
 }
 
 async function doSetPass() {
-  const pw=$v('spPass'), pw2=$v('spPass2');
-  if (pw !== pw2) { $('spErr').textContent='As senhas não coincidem'; return; }
-  if (pw.length < 8) { $('spErr').textContent='Mínimo 8 caracteres'; return; }
-  const mode = document.body.dataset.spMode;
-  const endpoint = mode==='invite' ? '/api/nutri/accept-invite' : '/api/nutri/reset-password';
-  const body = mode==='invite' ? {token, password:pw} : {token, new_password:pw};
+  var pw = $v('spPass'), pw2 = $v('spPass2');
+  if (pw !== pw2) { $('spErr').textContent = 'As senhas nao coincidem'; return; }
+  if (pw.length < 8) { $('spErr').textContent = 'Minimo 8 caracteres'; return; }
+  var mode = document.body.dataset.spMode;
+  var ep = mode === 'invite' ? '/api/nutri/accept-invite' : '/api/nutri/reset-password';
+  var body = mode === 'invite' ? {token: _token, password: pw} : {token: _token, new_password: pw};
   try {
-    const r = await api(endpoint, body);
-    toast('✓ ' + r.message);
-    setTimeout(() => { history.replaceState({}, '', '/painel'); showLogin(); }, 1500);
+    var r = await apiPost(ep, body);
+    toast(r.message, 'ok');
+    setTimeout(function() { history.replaceState({}, '', '/painel'); showLogin(); }, 1800);
   } catch(e) { $('spErr').textContent = e.message; }
 }
 
 function showMain() {
-  hide('vLogin'); show('main');
-  $('mName').textContent = _me.name;
-  $('hname').textContent = _me.name;
-  $('hrole').textContent = _me.role === 'admin' ? 'Admin' : _me.role === 'viewer' ? 'Visualizador' : 'Nutricionista';
-  loadPend();
+  hide('vLogin'); show('vMain');
+  $('hNutriName').textContent = _me.name;
+  loadData();
 }
 
 function doLogout() {
-  localStorage.removeItem('nt'); localStorage.removeItem('nm'); location.reload();
+  localStorage.removeItem('nt'); localStorage.removeItem('nm');
+  location.reload();
 }
 
-function showTab(t) {
-  ['Pend','All','Pad'].forEach(id => {
-    $('tab'+id).style.display = t===id.toLowerCase() ? '' : 'none';
-    $('tabBtn'+id).className = 'tab'+(t===id.toLowerCase()?' active':'');
+/* ── Data ─────────────────────────────────────── */
+async function loadData() {
+  try {
+    var results = await Promise.all([
+      authGet('/api/nutri/grid-padroes'),
+      authGet('/api/nutri/records'),
+      authGet('/api/nutri/pending'),
+    ]);
+    var gridResp = results[0], recsResp = results[1], pendResp = results[2];
+    _grid    = gridResp.pacientes || [];
+    _records = recsResp.records   || [];
+    _pending = pendResp.records   || [];
+    updateMetrics(gridResp);
+    renderAtencao();
+  } catch(e) {
+    if (e.status === 401) doLogout();
+  }
+}
+
+function updateMetrics(g) {
+  var inat7  = _grid.filter(function(p){ return daysInactive(p) >= 7; }).length;
+  var inat14 = _grid.filter(function(p){ return daysInactive(p) >= 14; }).length;
+  var weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  var semana  = _records.filter(function(r){ return r.created_at && r.created_at > weekAgo; }).length;
+  var react   = g.reativacao || {};
+
+  $('mTotal').textContent      = g.total || 0;
+  $('mInativos').textContent   = inat7;
+  $('mPadroes').textContent    = g.com_padrao || 0;
+  $('mSemana').textContent     = semana;
+  $('mResponded').textContent  = react.responded  || 0;
+  $('mScheduled').textContent  = react.scheduled  || 0;
+  $('mReactivated').textContent = react.reactivated || 0;
+
+  if (inat14 > 0) {
+    $('alertText').textContent = inat14 + ' paciente' + (inat14 > 1 ? 's' : '') + ' sem contato ha mais de 14 dias.';
+    show('alertBar');
+  }
+}
+
+/* ── Tabs ─────────────────────────────────────── */
+function switchTab(tab) {
+  _currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.tab === tab);
   });
-  if (t==='all') loadAll();
-  if (t==='pad') loadGrid();
+  var tabs = ['atencao','todos','padroes','consultas'];
+  tabs.forEach(function(t) {
+    var el = $('tab' + cap(t));
+    if (el) el.style.display = (t === tab) ? '' : 'none';
+  });
+  if (tab === 'atencao')  renderAtencao();
+  if (tab === 'todos')    renderTodos();
+  if (tab === 'padroes')  renderPadroes();
+  if (tab === 'consultas') renderConsultas();
 }
 
-async function loadPend() {
-  try {
-    const d = await authGet('/api/nutri/pending');
-    $('tblPend').innerHTML = renderPend(d.records, d.role);
-  } catch(e) { if(e.status===401) doLogout(); }
-}
-
-async function loadAll() {
-  try {
-    const d = await authGet('/api/nutri/records');
-    $('tblAll').innerHTML = renderAll(d.records);
-  } catch(e) { if(e.status===401) doLogout(); }
-}
-
-function renderPend(rows, role) {
-  if (!rows.length) return '<div class="empty">✓ Nenhum prontuário pendente</div>';
-  const canSign = role !== 'viewer';
-  let h = `<table><thead><tr><th>#</th><th>Paciente</th><th>Data</th><th>Marcadores alterados</th><th>D4Sign</th><th>Ação</th></tr></thead><tbody>`;
-  for (const r of rows) {
-    const dt = r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '—';
-    const flags = r.flags.map(f=>`<span class="flag-${f.type==='ALTO'?'a':'b'}">${f.marker} ${f.type==='ALTO'?'↑':'↓'}</span>`).join(' ') || '<span style="color:#94a3b8">—</span>';
-    const d4 = d4b(r.d4sign_status);
-    const ok = canSign && r.d4sign_status==='NONE';
-    h += `<tr><td><b>#${r.id}</b></td><td>${esc(r.patient_name)}</td><td>${dt}</td>
-      <td><small>${flags}</small></td><td>${d4}</td>
-      <td><button class="btn-sm" style="background:${ok?'#059669':'#94a3b8'};color:#fff" ${ok?'':'disabled'} onclick="sign(${r.id},this)">
-        ${ok?'📨 Assinar':'⏳ Aguardando'}</button></td></tr>`;
+/* ── Rendering ────────────────────────────────── */
+function renderAtencao() {
+  var urgent = _grid
+    .filter(function(p) { return daysInactive(p) >= 7 || (p.padrao && p.padrao.fase === 'CONFRONTO'); })
+    .sort(function(a, b) { return daysInactive(b) - daysInactive(a); });
+  if (!urgent.length) {
+    $('tabAtencao').innerHTML = '<div class="empty-state"><div class="empty-title">Nenhuma atencao necessaria agora</div><div class="empty-sub">Todas as pacientes registraram atividade nos ultimos 7 dias.</div></div>';
+    return;
   }
-  return h+'</tbody></table>';
+  $('tabAtencao').innerHTML = '<div class="patient-list">' + urgent.map(patientCard).join('') + '</div>';
 }
 
-function renderAll(rows) {
-  if (!rows.length) return '<div class="empty">Sem registros</div>';
-  let h = `<table><thead><tr><th>#</th><th>Paciente</th><th>Nutricionista</th><th>Data</th><th>Status</th><th>D4Sign</th><th>PDF</th></tr></thead><tbody>`;
-  for (const r of rows) {
-    const dt = r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '—';
-    const sb = r.status==='ASSINADO' ? '<span class="badge b-ok">Assinado</span>' : '<span class="badge b-pend">Pendente</span>';
-    const pdf = r.d4sign_signed_pdf_url ? `<a href="${r.d4sign_signed_pdf_url}" target="_blank" style="color:#059669">D4Sign</a>`
-              : r.pdf_url ? `<a href="${r.pdf_url}" target="_blank" style="color:#059669">PDF</a>` : '—';
-    h += `<tr><td>#${r.id}</td><td>${esc(r.patient_name)}</td><td>${esc(r.nutricionista)}</td><td>${dt}</td><td>${sb}</td><td>${d4b(r.d4sign_status)}</td><td>${pdf}</td></tr>`;
+function renderTodos() {
+  if (!_grid.length) {
+    $('tabTodos').innerHTML = '<div class="empty-state"><div class="empty-title">Nenhuma paciente cadastrada</div></div>';
+    return;
   }
-  return h+'</tbody></table>';
+  var sorted = _grid.slice().sort(function(a, b) { return daysInactive(b) - daysInactive(a); });
+  $('tabTodos').innerHTML = '<div class="patient-list">' + sorted.map(patientCard).join('') + '</div>';
 }
 
-async function sign(id, btn) {
-  btn.disabled=true; btn.textContent='⏳ Enviando…';
+function renderPadroes() {
+  var resumo = {ESCAPE:0, CONFRONTO:0, RETORNO:0, CULPA:0};
+  _grid.filter(function(p){ return p.padrao; }).forEach(function(p) {
+    if (resumo[p.padrao.fase] !== undefined) resumo[p.padrao.fase]++;
+  });
+
+  var phases = [
+    {fase:'ESCAPE',    label:'Escape alimentar', dc:'dot-escape'},
+    {fase:'CONFRONTO', label:'Confronto',         dc:'dot-confronto'},
+    {fase:'RETORNO',   label:'Retorno ao padrao', dc:'dot-retorno'},
+    {fase:'CULPA',     label:'Culpa emocional',   dc:'dot-culpa'},
+  ];
+
+  var sumHtml = phases.map(function(c) {
+    return '<div class="pat-sum" onclick="filterPadroes(\'' + c.fase + '\')">'
+      + '<div class="pat-dot ' + c.dc + '"></div>'
+      + '<div><div class="ps-num">' + (resumo[c.fase]||0) + '</div><div class="ps-lbl">' + c.label + '</div></div>'
+      + '</div>';
+  }).join('');
+
+  var filterHtml = '<div class="patterns-filters" id="pfFilters">'
+    + '<button class="filter-btn active" data-fase="todos" onclick="filterPadroes(\'todos\')">Todos</button>'
+    + phases.map(function(c) {
+        return '<button class="filter-btn" data-fase="' + c.fase + '" onclick="filterPadroes(\'' + c.fase + '\')">'
+          + '<span class="fd ' + c.dc + '"></span>' + c.label + '</button>';
+      }).join('')
+    + '</div>';
+
+  $('tabPadroes').innerHTML = '<div class="pattern-summary">' + sumHtml + '</div>' + filterHtml
+    + '<div id="padGrid" class="patient-list"></div>';
+
+  renderPadGrid('todos');
+}
+
+var _padFiltro = 'todos';
+function filterPadroes(fase) {
+  _padFiltro = fase;
+  document.querySelectorAll('#pfFilters .filter-btn').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.fase === fase);
+  });
+  renderPadGrid(fase);
+}
+
+function renderPadGrid(filtro) {
+  var rows = _grid.filter(function(p) {
+    return p.padrao && (filtro === 'todos' || p.padrao.fase === filtro);
+  });
+  var el = $('padGrid');
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-title">Nenhum padrao detectado nesta categoria</div></div>';
+    return;
+  }
+  el.innerHTML = rows.map(patientCard).join('');
+}
+
+function patientCard(p) {
+  var di = daysInactive(p);
+  var accent = di >= 14 ? 'red' : di >= 7 ? 'amber' : (p.padrao && p.padrao.fase === 'CONFRONTO') ? 'red' : 'safe';
+  var contactTxt = di === 0 ? 'Ultimo contato: hoje'
+    : di === 1 ? 'Ultimo contato: ha 1 dia'
+    : di < 999 ? 'Ultimo contato: ha ' + di + ' dias'
+    : 'Ultimo contato: nao registrado';
+
+  var patternTxt = '';
+  if (p.padrao) {
+    var pl = phaseLabel(p.padrao.fase);
+    var gat = (p.padrao.gatilhos || []).slice(0, 4).join(', ');
+    patternTxt = '<span>Padrao: ' + pl + (gat ? ' — gatilhos: ' + esc(gat) : '') + '</span>';
+  }
+
+  var streakTxt = '<span>Sequencia: ' + (p.streak || 0) + (p.streak === 1 ? ' dia' : ' dias') + '</span>';
+  var ph  = esc(p.phone || '');
+  var nm  = escq(titleCase(p.nome || 'Paciente'));
+  var pid = esc(p.id || '');
+  var dname = esc(titleCase(p.nome || 'Paciente'));
+
+  var stage     = p.reactivation_stage || '';
+  var stageBadge = '';
+  var stageActions = '';
+
+  if (stage === 'responded') {
+    stageBadge = '<div class="rbadge rb-responded">Respondeu — aguarda agendamento</div>';
+    stageActions = '<button class="btn-sched" data-id="' + pid + '" onclick="confirmScheduled(this.dataset.id)">Confirmar agendamento</button>'
+      + '<button class="btn-ghost" data-id="' + pid + '" onclick="openPron(this.dataset.id)">Prontuario</button>';
+  } else if (stage === 'scheduled') {
+    stageBadge = '<div class="rbadge rb-scheduled">Consulta agendada</div>';
+    stageActions = '<button class="btn-react" data-id="' + pid + '" onclick="confirmReactivation(this.dataset.id)">Confirmar retorno</button>'
+      + '<button class="btn-consult" data-id="' + pid + '" data-name="' + nm + '" data-phone="' + ph + '" onclick="doConsult(this.dataset.id,this.dataset.name,this.dataset.phone)">Iniciar consulta</button>'
+      + '<button class="btn-ghost" data-id="' + pid + '" onclick="openPron(this.dataset.id)">Prontuario</button>';
+  } else if (stage === 'reactivated') {
+    stageBadge = '<div class="rbadge rb-reactivated">Retorno confirmado</div>';
+    stageActions = '<button class="btn-ghost" data-id="' + pid + '" onclick="openPron(this.dataset.id)">Ver prontuario</button>';
+  } else {
+    stageActions = '<button class="btn-consult" data-id="' + pid + '" data-name="' + nm + '" data-phone="' + ph + '" onclick="doConsult(this.dataset.id,this.dataset.name,this.dataset.phone)">Iniciar consulta</button>'
+      + '<button class="btn-msg" data-phone="' + ph + '" data-name="' + nm + '" onclick="openWA(this.dataset.phone,this.dataset.name)">Mensagem</button>'
+      + '<button class="btn-ghost" data-id="' + pid + '" onclick="openPron(this.dataset.id)">Prontuario</button>';
+  }
+
+  return '<div class="patient-card">'
+    + '<div class="pc-accent ' + accent + '"></div>'
+    + '<div class="pc-body">'
+    + '<div class="pc-name">' + dname + '</div>'
+    + (stageBadge ? '<div>' + stageBadge + '</div>' : '')
+    + '<div class="pc-meta"><span>' + contactTxt + '</span>' + patternTxt + streakTxt + '</div>'
+    + '</div>'
+    + '<div class="pc-actions">' + stageActions + '</div>'
+    + '</div>';
+}
+
+function renderConsultas() {
+  var html = '';
+
+  html += '<div class="section-label">Prontuarios pendentes de assinatura</div>';
+  if (!_pending.length) {
+    html += '<div class="empty-state" style="padding:32px"><div class="empty-sub">Nenhum prontuario pendente no momento.</div></div>';
+  } else {
+    html += '<table class="rec-table"><thead><tr><th>Paciente</th><th>Data</th><th>D4Sign</th><th>Acao</th></tr></thead><tbody>';
+    _pending.forEach(function(r) {
+      var dt = r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '—';
+      var canSign = r.can_sign && r.d4sign_status === 'NONE';
+      html += '<tr>'
+        + '<td><strong>' + esc(titleCase(r.patient_name)) + '</strong></td>'
+        + '<td style="color:#6B6860">' + dt + '</td>'
+        + '<td>' + d4badge(r.d4sign_status) + '</td>'
+        + '<td><button class="rec-btn" ' + (canSign ? '' : 'disabled') + ' onclick="signRecord(' + r.id + ',this)">'
+        + (canSign ? 'Enviar para assinatura' : 'Aguardando') + '</button>'
+        + '&nbsp;<button class="btn-msg" style="font-size:11px;padding:5px 10px" data-id="' + esc(r.patient_id) + '" data-name="' + escq(titleCase(r.patient_name)) + '" data-phone="' + esc(r.patient_phone||'') + '" onclick="doConsult(this.dataset.id,this.dataset.name,this.dataset.phone)">Consulta</button>'
+        + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  html += '<div class="section-label" style="margin-top:8px">Historico de prontuarios</div>';
+  if (!_records.length) {
+    html += '<div class="empty-state" style="padding:32px"><div class="empty-sub">Nenhum registro.</div></div>';
+  } else {
+    html += '<table class="rec-table"><thead><tr><th>Paciente</th><th>Nutricionista</th><th>Data</th><th>Status</th><th>PDF</th></tr></thead><tbody>';
+    _records.slice(0, 60).forEach(function(r) {
+      var dt  = r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '—';
+      var sb  = r.status === 'ASSINADO' ? '<span class="badge badge-ok">Assinado</span>' : '<span class="badge badge-pend">Pendente</span>';
+      var pdf = r.d4sign_signed_pdf_url ? '<a href="' + r.d4sign_signed_pdf_url + '" target="_blank" style="color:#1A5C35;font-size:12px">Download</a>'
+              : r.pdf_url ? '<a href="' + r.pdf_url + '" target="_blank" style="color:#1A5C35;font-size:12px">PDF</a>' : '—';
+      html += '<tr><td><strong>' + esc(titleCase(r.patient_name)) + '</strong></td>'
+        + '<td style="color:#6B6860">' + esc(r.nutricionista||'—') + '</td>'
+        + '<td style="color:#6B6860">' + dt + '</td>'
+        + '<td>' + sb + '</td>'
+        + '<td>' + pdf + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  $('tabConsultas').innerHTML = html;
+}
+
+/* ── Actions ──────────────────────────────────── */
+async function doConsult(patientId, patientName, patientPhone) {
   try {
-    await authPost('/api/nutri/initiate-signing/'+id, {});
-    toast('✉ E-mail D4Sign enviado!'); loadPend();
-  } catch(e) { toast('Erro: '+e.message, true); btn.disabled=false; btn.textContent='📨 Assinar'; }
+    var d = await authPost('/api/nutri/start-consultation', {
+      patient_id: patientId,
+      patient_name: titleCase(patientName),
+      patient_phone: patientPhone || '',
+    });
+    if (patientPhone) toast('Mensagem enviada para ' + titleCase(patientName), 'ok');
+    openJitsi(d.room_url, titleCase(patientName));
+  } catch(e) {
+    toast('Erro: ' + e.message, 'err');
+  }
 }
 
-function d4b(s) {
-  if (!s||s==='NONE') return '<span class="badge" style="background:#f1f5f9;color:#64748b">—</span>';
-  if (s==='PENDING_SIGNATURE') return '<span class="badge b-sign">Aguardando</span>';
-  if (s==='SIGNED') return '<span class="badge b-ok">Assinado</span>';
-  return `<span class="badge">${s}</span>`;
+function openJitsi(url, name) {
+  $('jitsiTitle').textContent = 'Consulta — ' + name;
+  $('jitsiFrame').src = url;
+  $('modalJitsi').classList.add('open');
 }
 
-// ── utils ──
-function $(id){return document.getElementById(id)}
-function $v(id){return $(id).value.trim()}
-function show(id){$(id).style.display=''}
-function hide(id){$(id).style.display='none'}
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function closeJitsi() {
+  $('jitsiFrame').src = '';
+  $('modalJitsi').classList.remove('open');
+}
 
-async function api(url, body) {
-  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  const d = await r.json();
-  if (!r.ok) { const e = new Error(d.detail||'Erro'); e.status=r.status; throw e; }
+function openWA(phone, name) {
+  if (!phone) { toast('Paciente sem telefone cadastrado', 'err'); return; }
+  window.open('https://wa.me/' + phone.replace(/\\D/g, ''), '_blank');
+}
+
+function openPron(patientId) {
+  var p = _grid.find(function(x) { return x.id === patientId; });
+  if (!p) return;
+  var di = daysInactive(p);
+  $('pName').textContent = titleCase(p.nome);
+  $('pSub').textContent  = di < 999 ? 'Ultimo contato ha ' + di + ' dia' + (di === 1 ? '' : 's') : 'Sem registros de refeicao';
+
+  var html = '';
+
+  html += '<div class="pron-section"><div class="pron-label">Engajamento</div>'
+    + '<div class="pron-value">Sequencia atual: ' + (p.streak || 0) + ' dia' + ((p.streak||0) === 1 ? '' : 's') + '</div></div>';
+
+  if (p.padrao) {
+    var lb  = phaseLabel(p.padrao.fase);
+    var gat = (p.padrao.gatilhos || []);
+    var tags = gat.map(function(g) { return '<span class="trigger-tag">' + esc(g) + '</span>'; }).join('');
+    var da  = p.padrao.dias_atras;
+    var detTxt = (da === 0) ? 'hoje' : (da === 1) ? 'ha 1 dia' : (da != null ? 'ha ' + da + ' dias' : '');
+    html += '<div class="pron-section"><div class="pron-label">Padrao comportamental</div>'
+      + '<div class="pron-value">' + esc(lb) + ' — Ciclo ' + (p.padrao.ciclo || 1) + '</div>'
+      + (tags ? '<div style="margin-top:7px">' + tags + '</div>' : '')
+      + (detTxt ? '<div style="font-size:12px;color:#6B6860;margin-top:6px">Detectado ' + detTxt + '</div>' : '')
+      + '</div>';
+
+    if (p.padrao.acao_recomendada) {
+      html += '<div class="pron-section"><div class="pron-label">Recomendacao clinica</div>'
+        + '<div class="pron-value">' + esc(p.padrao.acao_recomendada) + '</div></div>';
+    }
+  } else {
+    html += '<div class="pron-section"><div class="pron-label">Padrao comportamental</div>'
+      + '<div class="pron-value" style="color:#6B6860">Nenhum padrao detectado ainda</div></div>';
+  }
+
+  if (p.phone) {
+    html += '<div class="pron-section"><div class="pron-label">Contato</div>'
+      + '<div class="pron-value">' + esc(p.phone) + '</div></div>';
+  }
+
+  $('pContent').innerHTML = html;
+  $('pBtnConsult').onclick = function() { closePron(); doConsult(p.id, p.nome, p.phone||''); };
+  $('pBtnMsg').onclick     = function() { closePron(); openWA(p.phone||'', p.nome); };
+  $('modalPron').classList.add('open');
+}
+
+function closePron() { $('modalPron').classList.remove('open'); }
+
+async function signRecord(id, btn) {
+  btn.disabled = true; btn.textContent = 'Enviando...';
+  try {
+    await authPost('/api/nutri/initiate-signing/' + id, {});
+    toast('E-mail D4Sign enviado com sucesso', 'ok');
+    var res = await Promise.all([authGet('/api/nutri/records'), authGet('/api/nutri/pending')]);
+    _records = res[0].records || []; _pending = res[1].records || [];
+    renderConsultas();
+  } catch(e) {
+    toast('Erro: ' + e.message, 'err');
+    btn.disabled = false; btn.textContent = 'Enviar para assinatura';
+  }
+}
+
+/* ── Reactivation actions ─────────────────────── */
+async function confirmScheduled(patientId) {
+  try {
+    await authPost('/api/nutri/confirm-scheduled', {patient_id: patientId});
+    toast('Agendamento confirmado', 'ok');
+    var p = _grid.find(function(x){ return x.id === patientId; });
+    if (p) p.reactivation_stage = 'scheduled';
+    if (_currentTab === 'atencao') renderAtencao();
+    else if (_currentTab === 'todos') renderTodos();
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+async function confirmReactivation(patientId) {
+  try {
+    var d = await authPost('/api/nutri/confirm-reactivation', {patient_id: patientId});
+    toast('Retorno confirmado para ' + titleCase(d.patient_name), 'ok');
+    var p = _grid.find(function(x){ return x.id === patientId; });
+    if (p) p.reactivation_stage = 'reactivated';
+    if (_currentTab === 'atencao') renderAtencao();
+    else if (_currentTab === 'todos') renderTodos();
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+/* ── Helpers ──────────────────────────────────── */
+function daysInactive(p) {
+  if (!p.ultimo_registro) return 999;
+  return Math.floor((Date.now() - new Date(p.ultimo_registro).getTime()) / 86400000);
+}
+
+function phaseLabel(fase) {
+  var m = {ESCAPE:'Escape alimentar', CONFRONTO:'Confronto', RETORNO:'Retorno ao padrao', CULPA:'Culpa emocional'};
+  return m[fase] || fase;
+}
+
+function titleCase(s) {
+  if (!s) return '';
+  return s.toLowerCase().replace(/\\b\\w/g, function(c) { return c.toUpperCase(); });
+}
+
+function d4badge(s) {
+  if (!s || s === 'NONE') return '<span style="color:#6B6860">—</span>';
+  if (s === 'PENDING_SIGNATURE') return '<span class="badge badge-wait">Aguardando</span>';
+  if (s === 'SIGNED') return '<span class="badge badge-ok">Assinado</span>';
+  return '<span class="badge">' + esc(s) + '</span>';
+}
+
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function $(id) { return document.getElementById(id); }
+function $v(id) { return $(id).value.trim(); }
+function show(id) { $(id).style.display = ''; }
+function hide(id) { $(id).style.display = 'none'; }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escq(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+async function apiPost(url, body) {
+  var r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  var d = await r.json();
+  if (!r.ok) { var e = new Error(d.detail||'Erro'); e.status = r.status; throw e; }
   return d;
 }
 async function authGet(url) {
-  const r = await fetch(url, {headers:{Authorization:'Bearer '+_tok}});
-  const d = await r.json();
-  if (!r.ok) { const e = new Error(d.detail||'Erro'); e.status=r.status; throw e; }
+  var r = await fetch(url, {headers:{Authorization:'Bearer ' + _tok}});
+  var d = await r.json();
+  if (!r.ok) { var e = new Error(d.detail||'Erro'); e.status = r.status; throw e; }
   return d;
 }
 async function authPost(url, body) {
-  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+_tok}, body:JSON.stringify(body)});
-  const d = await r.json();
-  if (!r.ok) { const e = new Error(d.detail||'Erro'); e.status=r.status; throw e; }
+  var r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+_tok}, body:JSON.stringify(body)});
+  var d = await r.json();
+  if (!r.ok) { var e = new Error(d.detail||'Erro'); e.status = r.status; throw e; }
   return d;
 }
 
-function toast(msg, isErr=false) {
-  const t=$('toast'); t.textContent=msg;
-  t.style.background=isErr?'#dc2626':'#059669';
-  t.style.display='block'; setTimeout(()=>t.style.display='none',4000);
+var _toastT = null;
+function toast(msg, type) {
+  var t = $('toast'); t.textContent = msg;
+  t.className = type === 'err' ? 'err' : type === 'ok' ? 'ok' : '';
+  t.style.display = 'block';
+  clearTimeout(_toastT);
+  _toastT = setTimeout(function() { t.style.display = 'none'; }, 4500);
 }
 
-let _gridData = [], _gridFiltro = 'todos';
-
-async function loadGrid() {
-  try {
-    const d = await authGet('/api/nutri/grid-padroes');
-    _gridData = d.pacientes;
-    renderSummary(d.resumo);
-    renderGrid(_gridData, _gridFiltro);
-  } catch(e) { if(e.status===401) doLogout(); }
-}
-
-function renderSummary(r) {
-  $("gridSummary").innerHTML = "";
-  var cards = [
-    {f:"ESCAPE",    l:"Escape",    s:"1a tentativa",    c:"sc-escape",    e:"🌊"},
-    {f:"CONFRONTO", l:"Confronto", s:"Precisa atencao", c:"sc-confronto", e:"⚡"},
-    {f:"RETORNO",   l:"Retorno",   s:"Voltou ao padrao",c:"sc-retorno",   e:"🔄"},
-    {f:"CULPA",     l:"Culpa",     s:"Check-in emoc.",  c:"sc-culpa",     e:"💙"},
-  ];
-  for (var i = 0; i < cards.length; i++) {
-    var c = cards[i];
-    var div = document.createElement("div");
-    div.className = "sum-card " + c.c;
-    (function(fase){ div.addEventListener("click", function(){ filterGrid(fase); }); })(c.f);
-    div.innerHTML = "<div class='num'>" + (r[c.f]||0) + "</div>"
-      + "<div class='lbl'>" + c.e + " " + c.l + "</div>"
-      + "<div class='sub'>" + c.s + "</div>";
-    $("gridSummary").appendChild(div);
-  }
-}
-
-function filterGrid(fase) {
-  _gridFiltro = fase;
-  document.querySelectorAll('.gf-btn').forEach(b => b.classList.remove('on'));
-  const cls = fase==='todos' ? 'gf-todos' : 'gf-'+fase.toLowerCase();
-  const el = document.querySelector('.'+cls);
-  if (el) el.classList.add('on');
-  renderGrid(_gridData, fase);
-}
-
-function renderGrid(data, filtro) {
-  var el = $("gridPadroes");
-  var rows = filtro === "todos" ? data.filter(function(p){ return p.padrao; })
-           : data.filter(function(p){ return p.padrao && p.padrao.fase === filtro; });
-  if (!rows.length) {
-    el.innerHTML = "<div class='empty-grid'>Nenhum paciente nesta fase ainda.<br/>Os padroes aparecem quando os pacientes registram refeicoes.</div>";
-    return;
-  }
-  var html = "";
-  for (var i = 0; i < rows.length; i++) {
-    var p = rows[i];
-    var pad = p.padrao;
-    var fl = pad.fase.toLowerCase();
-    var dias = pad.dias_atras === 0 ? "hoje" : pad.dias_atras === 1 ? "ontem" : pad.dias_atras + "d atras";
-    var gat = (pad.gatilhos || []).slice(0, 3).join(", ");
-    var deg = Math.min(pad.degradacao || 0, 3);
-    var dots = "";
-    for (var d = 0; d < 3; d++) dots += d < deg ? "●" : "○";
-    html += "<div class='pcard fase-" + fl + "'>";
-    html += "<div class='fase-bar'></div>";
-    html += "<div class='pnome'>" + esc(p.nome) + "</div>";
-    html += "<span class='pfase pfase-" + fl + "'>" + pad.emoji + " " + pad.fase + "</span>";
-    html += "<div class='pinfo'>" + (gat ? "<b>Gatilhos:</b> " + esc(gat) + "<br/>" : "");
-    html += "<b>Detectado:</b> " + dias + " · Streak: " + p.streak + "d</div>";
-    html += "<div class='pacao'>→ " + esc(pad.acao_recomendada) + "</div>";
-    html += "<div class='pciclo'>Ciclo #" + (pad.ciclo || 1) + " · " + dots + "</div>";
-    html += "</div>";
-  }
-  el.innerHTML = html;
-}
-
-document.addEventListener('keydown', e => {
-  if (e.key==='Enter') {
-    if (!$('formLogin').style.display) doLogin();
-    else if (!$('formForgot').style.display) doForgot();
-    else if (!$('formSetPass').style.display) doSetPass();
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') { closeJitsi(); closePron(); }
+  if (e.key === 'Enter') {
+    if ($('frmLogin')   && $('frmLogin').style.display   !== 'none') doLogin();
+    if ($('frmForgot')  && $('frmForgot').style.display  !== 'none') doForgot();
+    if ($('frmSetPass') && $('frmSetPass').style.display !== 'none') doSetPass();
   }
 });
+$('modalPron').addEventListener('click', function(e) { if (e.target === this) closePron(); });
 </script>
 </body>
 </html>
