@@ -182,38 +182,70 @@ def register_patient(
 ) -> dict:
     now = datetime.now(tz=timezone.utc)
     trial_ends = now + timedelta(days=7)
+    hashed = _hash_password(payload.password)
 
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            # Verifica duplicatas
-            cur.execute(
-                "SELECT id FROM patients WHERE email = %s OR cpf = %s",
-                (payload.email, payload.cpf),
-            )
-            if cur.fetchone():
-                raise HTTPException(status_code=409, detail="Email ou CPF já cadastrado")
-
-            # Insere paciente
+            # 1. Busca perfil Dietbox existente por CPF (metadata) ou email
             cur.execute(
                 """
-                INSERT INTO patients
-                  (source_system, external_id, display_name, email, cpf,
-                   hashed_password, subscription_status, trial_ends_at, created_at, updated_at)
-                VALUES ('app', %s, %s, %s, %s, %s, 'trial', %s, %s, %s)
-                RETURNING id
+                SELECT id, display_name, source_system
+                FROM patients
+                WHERE cpf = %s
+                   OR email = %s
+                   OR metadata->>'Cpf' = %s
+                   OR metadata->>'CPF' = %s
+                LIMIT 1
                 """,
-                (
-                    f"app:{payload.cpf}",
-                    payload.name,
-                    payload.email,
-                    payload.cpf,
-                    _hash_password(payload.password),
-                    trial_ends,
-                    now,
-                    now,
-                ),
+                (payload.cpf, payload.email, payload.cpf, payload.cpf),
             )
-            new_id = cur.fetchone()["id"]
+            existing = cur.fetchone()
+
+            if existing and existing["source_system"] != "app":
+                # Vincula conta do app ao perfil Dietbox existente
+                cur.execute(
+                    """
+                    UPDATE patients SET
+                        hashed_password      = %s,
+                        email                = %s,
+                        cpf                  = %s,
+                        subscription_status  = 'trial',
+                        trial_ends_at        = %s,
+                        updated_at           = %s
+                    WHERE id = %s
+                    """,
+                    (hashed, payload.email, payload.cpf, trial_ends, now, existing["id"]),
+                )
+                patient_id = existing["id"]
+                name = existing["display_name"] or payload.name
+                linked = True
+            elif existing:
+                # Conta app já existe — rejeita duplicata
+                raise HTTPException(status_code=409, detail="Email ou CPF já cadastrado")
+            else:
+                # Novo paciente — cria normalmente
+                cur.execute(
+                    """
+                    INSERT INTO patients
+                      (source_system, external_id, display_name, email, cpf,
+                       hashed_password, subscription_status, trial_ends_at, created_at, updated_at)
+                    VALUES ('app', %s, %s, %s, %s, %s, 'trial', %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        f"app:{payload.cpf}",
+                        payload.name,
+                        payload.email,
+                        payload.cpf,
+                        hashed,
+                        trial_ends,
+                        now,
+                        now,
+                    ),
+                )
+                patient_id = cur.fetchone()["id"]
+                name = payload.name
+                linked = False
 
             # Registra telefone
             cur.execute(
@@ -222,19 +254,122 @@ def register_patient(
                 VALUES (%s, %s, 'app_register')
                 ON CONFLICT (phone) DO NOTHING
                 """,
-                (new_id, payload.phone_number),
+                (patient_id, payload.phone_number),
             )
             conn.commit()
 
     secret = settings.jwt_secret or "nutrideby_jwt_dev_secret"
-    token = _make_jwt(str(new_id), payload.name, secret)
+    token = _make_jwt(str(patient_id), name, secret)
+    msg = (
+        "Conta vinculada ao seu perfil NutriDeby! Trial de 7 dias ativo."
+        if linked else
+        "Cadastro realizado! Trial de 7 dias ativo."
+    )
     return {
-        "message": "Cadastro realizado! Trial de 7 dias ativo.",
-        "patient_id": str(new_id),
+        "message": msg,
+        "patient_id": str(patient_id),
         "token": token,
         "trial_ends_at": trial_ends.isoformat(),
+        "linked_dietbox": linked,
     }
 
+
+
+
+@router.get("/{patient_id}/profile")
+def get_patient_profile(
+    patient_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
+    patient: Annotated[dict, Depends(check_active_access)],
+) -> dict:
+    """Perfil completo do paciente para o app: metas, última medição, última prescrição."""
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            # Dados base do paciente
+            cur.execute(
+                """
+                SELECT display_name, email, subscription_status,
+                       daily_calories_target, daily_protein_target,
+                       daily_carbs_target, daily_fat_target, water_target_ml,
+                       current_streak, longest_streak, deby_level, deby_xp,
+                       league_name, league_points, goal_statement, goal_deadline
+                FROM patients WHERE id = %s
+                """,
+                (patient_id,),
+            )
+            p = cur.fetchone()
+            if not p:
+                raise HTTPException(status_code=404, detail="Paciente não encontrado")
+
+            # Última avaliação física (dietbox_medidas)
+            cur.execute(
+                """
+                SELECT descricao, data_avaliacao, payload
+                FROM dietbox_medidas
+                WHERE patient_id = %s
+                ORDER BY data_avaliacao DESC NULLS LAST
+                LIMIT 1
+                """,
+                (patient_id,),
+            )
+            last_medida = cur.fetchone()
+
+            # Última prescrição (dietbox_prescricoes)
+            cur.execute(
+                """
+                SELECT titulo, data_prescricao, payload
+                FROM dietbox_prescricoes
+                WHERE patient_id = %s
+                ORDER BY data_prescricao DESC NULLS LAST
+                LIMIT 1
+                """,
+                (patient_id,),
+            )
+            last_prescricao = cur.fetchone()
+
+    measurement = None
+    if last_medida:
+        payload_m = last_medida["payload"] or {}
+        measurement = {
+            "description": last_medida["descricao"],
+            "date": last_medida["data_avaliacao"].date().isoformat() if last_medida["data_avaliacao"] else None,
+            "weight_kg": payload_m.get("pesoAtual") or payload_m.get("peso") or payload_m.get("weight"),
+        }
+
+    prescription = None
+    if last_prescricao:
+        payload_pr = last_prescricao["payload"] or {}
+        prescription = {
+            "title": payload_pr.get("Title") or last_prescricao["titulo"],
+            "date": last_prescricao["data_prescricao"].date().isoformat() if last_prescricao["data_prescricao"] else None,
+        }
+
+    return {
+        "name": p["display_name"],
+        "email": p["email"],
+        "subscription_status": p["subscription_status"],
+        "calories_target": p["daily_calories_target"],
+        "protein_target": p["daily_protein_target"],
+        "carbs_target": p["daily_carbs_target"],
+        "fat_target": p["daily_fat_target"],
+        "water_target_ml": p["water_target_ml"],
+        "streak": {
+            "current": p["current_streak"] or 0,
+            "longest": p["longest_streak"] or 0,
+        },
+        "gamification": {
+            "level": p["deby_level"] or 1,
+            "xp": p["deby_xp"] or 0,
+            "league": p["league_name"] or "Bronze",
+            "league_points": p["league_points"] or 0,
+        },
+        "goal": {
+            "statement": p["goal_statement"],
+            "deadline": p["goal_deadline"].isoformat() if p["goal_deadline"] else None,
+        },
+        "last_measurement": measurement,
+        "last_prescription": prescription,
+    }
 
 @router.post("/auth")
 def auth_patient(
