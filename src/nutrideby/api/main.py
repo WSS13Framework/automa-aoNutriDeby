@@ -1,6 +1,7 @@
-"""FastAPI — leitura de `patients` / `documents` para agentes e integrações."""
 
 from __future__ import annotations
+import json
+from datetime import datetime
 
 import logging
 import secrets
@@ -11,13 +12,23 @@ from uuid import UUID
 
 import psycopg
 import psycopg.errors
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
 from nutrideby.clients.openai_embeddings import embed_single_query
 from nutrideby.api.analyze import router as analyze_router
+from nutrideby.api.onboarding_api import router as onboarding_router
+from nutrideby.api.mobile_api import router as mobile_router
+from nutrideby.api.stripe_router import router as stripe_router
+from nutrideby.api.referral_router import router as referral_router
+from nutrideby.api.gamification_router import router as gamification_router
+from nutrideby.api.waitlist_router import router as waitlist_router
+from nutrideby.api.clinical_router import router as clinical_router
+from nutrideby.api.paciente_acesso_router import router as paciente_acesso_router
+from nutrideby.api.nutricionista_router import router as nutri_router, _panel_router
 from nutrideby.api.deps import get_settings, require_api_key
 from nutrideby.config import Settings
 from nutrideby.rag.patient_retrieve import patient_retrieve
@@ -61,7 +72,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(analyze_router)
+app.include_router(onboarding_router)
+app.include_router(mobile_router)
+app.include_router(stripe_router)
+app.include_router(referral_router)
+app.include_router(gamification_router)
+app.include_router(waitlist_router)
+app.include_router(clinical_router)
+app.include_router(paciente_acesso_router)
+app.include_router(nutri_router)
+app.include_router(_panel_router)
 
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+        '<circle cx="16" cy="16" r="16" fill="#059669"/>'
+        '<text x="16" y="22" text-anchor="middle" font-family="sans-serif" font-weight="bold" font-size="18" fill="white">N</text>'
+        '</svg>'
+    )
+    return Response(content=svg, media_type="image/svg+xml")
 
 @app.on_event("startup")
 def _startup() -> None:
@@ -693,3 +726,277 @@ async def kiwify_webhook(
         ) from e
     logger.info("kiwify webhook gravado id=%s", wid)
     return {"received": True, "id": str(wid)}
+
+
+@app.post("/hooks/twilio/inbound")
+async def twilio_inbound(request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> dict:
+    """Recebe mensagens WhatsApp dos pacientes — texto ou imagem — e aciona RAG."""
+    import asyncio
+    form = await request.form()
+    from_raw   = str(form.get("From", ""))
+    body       = str(form.get("Body", ""))
+    num_media  = int(form.get("NumMedia", 0) or 0)
+    media_url  = str(form.get("MediaUrl0", "")) or None
+    media_type = str(form.get("MediaContentType0", "")) or None
+
+    logger.info("Twilio inbound: from=%s type=%s body=%s", from_raw, "image" if num_media else "text", body[:80])
+    # Ignora callbacks vazios do Sandbox (evita loop To==From)
+    if from_raw == "whatsapp:+14155238886" and not body.strip() and num_media == 0:
+        logger.info("Ignorando callback vazio do Sandbox")
+        return {"status": "ignored"}
+
+    # Processa em background para Twilio não reenviar por timeout
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        None,
+        _process_inbound_bg,
+        from_raw, body, num_media, media_url, media_type, settings,
+    )
+    return {"status": "queued"}
+
+
+def _process_inbound_bg(from_raw, body, num_media, media_url, media_type, settings):
+    """Executa o inbound_processor em thread separada (não bloqueia o event loop)."""
+    try:
+        from nutrideby.agents.inbound_processor import process_inbound
+        process_inbound(
+            from_raw=from_raw,
+            body=body,
+            num_media=num_media,
+            media_url=media_url,
+            media_type=media_type,
+            settings=settings,
+        )
+    except Exception as exc:
+        logger.error("inbound_bg error: %s", exc, exc_info=True)
+
+
+
+_META_VERIFY_TOKEN = "nutrideby_webhook_2026"
+
+
+@app.get("/hooks/whatsapp/inbound")
+async def meta_whatsapp_verify(request: Request) -> Response:
+    """Verificação do webhook Meta WhatsApp Business API."""
+    mode      = request.query_params.get("hub.mode")
+    token     = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge", "")
+
+    if mode == "subscribe" and token == _META_VERIFY_TOKEN:
+        logger.info("Meta WhatsApp webhook verificado com sucesso")
+        return Response(content=challenge, media_type="text/plain")
+
+    logger.warning("Meta WhatsApp webhook: token inválido ou mode errado — mode=%s", mode)
+    raise HTTPException(status_code=403, detail="Token de verificação inválido")
+
+
+@app.post("/hooks/whatsapp/inbound")
+async def meta_whatsapp_inbound(request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> dict:
+    """Recebe mensagens WhatsApp Business da Meta e aciona RAG."""
+    import asyncio
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    # Extrai mensagem do envelope Meta
+    from_raw   = ""
+    body       = ""
+    num_media  = 0
+    media_url  = None
+    media_type = None
+
+    try:
+        entry    = (payload.get("entry") or [{}])[0]
+        changes  = (entry.get("changes") or [{}])[0]
+        value    = changes.get("value") or {}
+        messages = value.get("messages") or []
+        if messages:
+            msg        = messages[0]
+            from_raw   = msg.get("from", "")
+            msg_type   = msg.get("type", "text")
+            if msg_type == "text":
+                body = (msg.get("text") or {}).get("body", "")
+            elif msg_type in ("image", "audio", "video", "document"):
+                num_media  = 1
+                media_info = msg.get(msg_type) or {}
+                media_url  = media_info.get("link") or media_info.get("url") or media_info.get("id")
+                media_type = f"{msg_type}/*"
+    except Exception as exc:
+        logger.warning("Meta WhatsApp: erro ao parsear payload — %s", exc)
+
+    if not from_raw:
+        return {"status": "ignored", "reason": "no_message"}
+
+    logger.info("Meta WhatsApp inbound: from=%s type=%s body=%s", from_raw, "image" if num_media else "text", body[:80])
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        None,
+        _process_inbound_bg,
+        from_raw, body, num_media, media_url, media_type, settings,
+    )
+    return {"status": "ok"}
+
+@app.get("/v1/conversas")
+async def listar_conversas(settings: Annotated[Settings, Depends(get_settings)]) -> list:
+    """Lista respostas dos pacientes para o dashboard."""
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    id,
+                    payload->>'from' as telefone,
+                    payload->>'body' as mensagem,
+                    payload->>'received_at' as recebido_em,
+                    received_at as created_at
+                FROM integration_webhook_inbox
+                WHERE source = 'twilio_inbound'
+                ORDER BY received_at DESC
+                LIMIT 100
+            """)
+            return cur.fetchall()
+
+
+
+# ── Tenant white-label config ─────────────────────────────────────────────────
+
+_TENANT_CONFIGS: dict[str, dict] = {
+    "dra-debora": {
+        "tenant_id": "dra-debora",
+        "nutricionista_nome": "Dra. Débora Oliveira",
+        "nome_agente": "Assistente da Dra. Débora",
+        "cor_primaria": "#2ECC71",
+        "cor_secundaria": "#1A5C3A",
+        "logo_url": None,
+        "mensagem_boas_vindas": "Prazer! Sou a assistente da Dra. Débora.",
+        "numero_whatsapp": None,
+    },
+}
+
+
+@app.get("/tenant/{tenant_id}/config")
+def get_tenant_config(tenant_id: str) -> dict:
+    cfg = _TENANT_CONFIGS.get(tenant_id)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' não encontrado")
+    return cfg
+
+
+# ── /v1/chat models ───────────────────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    patient_id: str
+    message: str
+    message_type: str = Field(default="text", pattern="^(text|image|audio)$")
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    updated_at: str
+
+
+class ChatHistoryItem(BaseModel):
+    role: str  # "user" | "assistant"
+    content: str
+    created_at: str
+
+
+# ── POST /v1/chat ─────────────────────────────────────────────────────────────
+
+@app.post("/v1/chat", response_model=ChatResponse)
+def chat(
+    body: ChatRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: str | None = Header(None),
+) -> ChatResponse:
+    from nutrideby.api.mobile_api import _get_patient_from_token
+    from nutrideby.agents import patient_engine
+
+    token_data = _get_patient_from_token(authorization, settings)
+    if token_data["sub"] != body.patient_id:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, display_name, metadata FROM patients WHERE id = %s",
+                (body.patient_id,),
+            )
+            patient = cur.fetchone()
+        if not patient:
+            raise HTTPException(status_code=404, detail="Paciente não encontrado")
+
+        patient_dict = {
+            "id": str(patient["id"]),
+            "display_name": patient.get("display_name"),
+            "metadata": patient.get("metadata") or {},
+        }
+
+        try:
+            reply_text, _ = patient_engine.route(
+                patient=patient_dict,
+                phone=f"app:{body.patient_id}",
+                body=body.message,
+                msg_type=body.message_type,
+                media_url=None,
+                media_type=None,
+                conn=conn,
+                settings=settings,
+            )
+        except Exception as exc:
+            logger.error("chat route error: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Erro ao processar mensagem: {exc}") from exc
+
+        now = datetime.now()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO inbound_messages
+                  (patient_id, phone, message_type, body, reply_body, replied_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (body.patient_id, f"app:{body.patient_id}", body.message_type,
+                 body.message, reply_text, now),
+            )
+            conn.commit()
+
+    return ChatResponse(reply=reply_text, updated_at=now.isoformat())
+
+
+# ── GET /v1/chat/history/{patient_id} ─────────────────────────────────────────
+
+@app.get("/v1/chat/history/{patient_id}", response_model=list[ChatHistoryItem])
+def chat_history(
+    patient_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: str | None = Header(None),
+) -> list[ChatHistoryItem]:
+    from nutrideby.api.mobile_api import _get_patient_from_token
+
+    token_data = _get_patient_from_token(authorization, settings)
+    if token_data["sub"] != patient_id:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT body, reply_body, received_at
+                FROM inbound_messages
+                WHERE patient_id = %s
+                ORDER BY received_at DESC
+                LIMIT 20
+                """,
+                (patient_id,),
+            )
+            rows = cur.fetchall()
+
+    history: list[ChatHistoryItem] = []
+    for r in reversed(rows):
+        ts = r["received_at"].isoformat() if r.get("received_at") else ""
+        if r.get("body"):
+            history.append(ChatHistoryItem(role="user", content=r["body"], created_at=ts))
+        if r.get("reply_body"):
+            history.append(ChatHistoryItem(role="assistant", content=r["reply_body"], created_at=ts))
+    return history

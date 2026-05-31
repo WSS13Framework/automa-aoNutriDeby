@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: nutrideby_dev
       POSTGRES_DB: nutrideby
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/sql:/docker-entrypoint-initdb.d:ro
@@ -91,7 +91,7 @@ services:
     env_file:
       - ./dashboard/.env
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     depends_on:
       - api
     profiles:

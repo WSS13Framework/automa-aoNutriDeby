@@ -63,7 +63,28 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_api_base: str = "https://api.openai.com"
     openai_embedding_model: str = "text-embedding-3-small"
+    # Twilio WhatsApp
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_from_number: str = "whatsapp:+552123917864"
+
     openai_chat_model: str = Field(
         default="gpt-4o-mini",
         description="Modelo para /v1/patients/.../analyze quando use_genai=false ou GenAI indisponível.",
     )
+
+    # JWT para autenticação de pacientes no app móvel
+    jwt_secret: str | None = Field(default=None)
+
+
+    # Stripe (monetização)
+    stripe_secret_key: str | None = Field(default=None)
+    stripe_webhook_secret: str | None = Field(default=None)
+    stripe_price_id: str | None = Field(default=None)
+
+    # URL base do app (redirects pós-pagamento, links de referral, etc.)
+    app_base_url: str | None = Field(default=None)
+
+    # Resend (e-mails transacionais — convite e reset de senha)
+    resend_api_key: str | None = Field(default=None)
+    resend_from_email: str = Field(default="NutriDeby <noreply@nutrideby.com>")

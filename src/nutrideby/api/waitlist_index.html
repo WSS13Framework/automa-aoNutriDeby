@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NutriDeby — Lista de Espera</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .gradient-bg { background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%); }
+    .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+  </style>
+</head>
+<body class="gradient-bg min-h-screen flex items-center justify-center p-4 font-sans">
+
+<!-- TELA 1: Formulário -->
+<div id="form-screen" class="w-full max-w-md">
+  <div class="text-center mb-8">
+    <div class="text-5xl mb-3">🥗</div>
+    <h1 class="text-4xl font-bold text-white mb-2">NutriDeby</h1>
+    <p class="text-green-200 text-lg">Sua nutricionista pessoal com IA, disponível 24h</p>
+  </div>
+
+  <div class="card rounded-2xl p-8 shadow-2xl">
+    <h2 class="text-white text-xl font-semibold mb-1">Entre na lista de espera</h2>
+    <p class="text-green-200 text-sm mb-6">Seja um dos primeiros a experimentar gratuitamente.</p>
+
+    <div id="error-msg" class="hidden bg-red-500 bg-opacity-20 border border-red-400 text-red-200 rounded-lg p-3 mb-4 text-sm"></div>
+
+    <form id="waitlist-form" class="space-y-4">
+      <div>
+        <label class="text-green-200 text-sm font-medium block mb-1">Nome completo</label>
+        <input type="text" id="name" required placeholder="Maria Silva"
+          class="w-full bg-white bg-opacity-10 border border-white border-opacity-20 rounded-lg px-4 py-3 text-white placeholder-green-300 focus:outline-none focus:border-green-300 transition"/>
+      </div>
+      <div>
+        <label class="text-green-200 text-sm font-medium block mb-1">WhatsApp</label>
+        <input type="tel" id="phone" required placeholder="(11) 99999-9999"
+          class="w-full bg-white bg-opacity-10 border border-white border-opacity-20 rounded-lg px-4 py-3 text-white placeholder-green-300 focus:outline-none focus:border-green-300 transition"/>
+      </div>
+      <div>
+        <label class="text-green-200 text-sm font-medium block mb-1">E-mail</label>
+        <input type="email" id="email" required placeholder="maria@email.com"
+          class="w-full bg-white bg-opacity-10 border border-white border-opacity-20 rounded-lg px-4 py-3 text-white placeholder-green-300 focus:outline-none focus:border-green-300 transition"/>
+      </div>
+      <button type="submit" id="submit-btn"
+        class="w-full bg-white text-green-700 font-bold py-3 rounded-xl hover:bg-green-50 transition text-lg shadow-lg mt-2">
+        Quero entrar na lista! 🚀
+      </button>
+    </form>
+
+    <p class="text-green-300 text-xs text-center mt-4">
+      Indique amigos e suba posições na fila 📈
+    </p>
+  </div>
+</div>
+
+<!-- TELA 2: Sucesso -->
+<div id="success-screen" class="hidden w-full max-w-md">
+  <div class="text-center mb-6">
+    <div class="text-6xl mb-3">🎉</div>
+    <h1 class="text-3xl font-bold text-white mb-2">Você está na lista!</h1>
+    <p class="text-green-200">Compartilhe com amigos e suba posições na fila</p>
+  </div>
+
+  <div class="card rounded-2xl p-8 shadow-2xl space-y-5">
+    <div class="text-center">
+      <p class="text-green-200 text-sm mb-1">Sua posição atual na fila</p>
+      <div class="text-6xl font-black text-white" id="position-display">—</div>
+    </div>
+
+    <div class="bg-white bg-opacity-10 rounded-xl p-4 text-center">
+      <p class="text-green-200 text-xs mb-2">Seu link de indicação exclusivo</p>
+      <p id="share-link-display" class="text-white font-mono text-sm break-all"></p>
+    </div>
+
+    <button id="copy-btn" onclick="copyLink()"
+      class="w-full bg-white text-green-700 font-bold py-3 rounded-xl hover:bg-green-50 transition text-base shadow">
+      📋 Copiar link de indicação
+    </button>
+
+    <div class="grid grid-cols-2 gap-3">
+      <a id="whatsapp-btn" href="#" target="_blank"
+        class="bg-green-500 hover:bg-green-400 text-white font-semibold py-3 rounded-xl text-center text-sm transition">
+        💬 Compartilhar
+      </a>
+      <button onclick="copyLink()"
+        class="bg-white bg-opacity-15 hover:bg-opacity-25 text-white font-semibold py-3 rounded-xl text-sm transition">
+        🔗 Copiar link
+      </button>
+    </div>
+
+    <p class="text-green-200 text-xs text-center">
+      Cada amigo indicado que se cadastrar = <strong class="text-white">+10 pontos</strong> para subir na fila!
+    </p>
+  </div>
+</div>
+
+<script>
+  const API_BASE = window.location.origin.includes("localhost")
+    ? "http://localhost:8080"
+    : "https://api.nutrideby.com";
+
+  // Captura código de referral da URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const refCode = urlParams.get("ref") || "";
+
+  let shareLink = "";
+
+  document.getElementById("waitlist-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("submit-btn");
+    btn.disabled = true;
+    btn.textContent = "Cadastrando...";
+    document.getElementById("error-msg").classList.add("hidden");
+
+    const body = {
+      name: document.getElementById("name").value.trim(),
+      phone: document.getElementById("phone").value.trim(),
+      email: document.getElementById("email").value.trim(),
+      ref: refCode || null,
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/waitlist/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.detail || "Erro ao cadastrar. Tente novamente.");
+      }
+
+      shareLink = data.share_link;
+      document.getElementById("position-display").textContent = `#${data.position}`;
+      document.getElementById("share-link-display").textContent = shareLink;
+      document.getElementById("whatsapp-btn").href =
+        `https://wa.me/?text=${encodeURIComponent("Entrei na lista de espera do NutriDeby, sua nutricionista com IA! Entra também: " + shareLink)}`;
+
+      document.getElementById("form-screen").classList.add("hidden");
+      document.getElementById("success-screen").classList.remove("hidden");
+    } catch (err) {
+      const errEl = document.getElementById("error-msg");
+      errEl.textContent = err.message;
+      errEl.classList.remove("hidden");
+      btn.disabled = false;
+      btn.textContent = "Quero entrar na lista! 🚀";
+    }
+  });
+
+  function copyLink() {
+    navigator.clipboard.writeText(shareLink).then(() => {
+      const btn = document.getElementById("copy-btn");
+      btn.textContent = "✅ Copiado!";
+      setTimeout(() => { btn.textContent = "📋 Copiar link de indicação"; }, 2000);
+    });
+  }
+</script>
+</body>
+</html>

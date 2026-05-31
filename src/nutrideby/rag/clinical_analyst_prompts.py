@@ -75,7 +75,7 @@ def build_system_motor_inteligencia(context_block: str) -> str:
 
 
 def build_system_analista_clinico(context_block: str) -> str:
-    """Perfil «Analista Clínico» (exames em tópicos + sugestão nutricional TACO)."""
+    """Perfil «Analista Clínico» (exames em tópicos + sugestão nutricional TACO). Sempre em PT-BR."""
     return f"{_ANALIST_ROLE_AND_RULES.strip()}\n\n{rag_hits_section(context_block)}"
 
 

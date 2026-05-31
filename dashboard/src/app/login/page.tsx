@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { signIn } from "next-auth/react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -67,6 +69,12 @@ export default function LoginPage() {
             {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
+        <p className="mt-4 text-center text-xs text-gray-400">
+          Não tem conta?{" "}
+          <Link href="/registro" className="text-brand-600 font-semibold hover:underline">
+            Criar conta grátis
+          </Link>
+        </p>
       </div>
     </div>
   );
