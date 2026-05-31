@@ -36,6 +36,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import psycopg
+from psycopg.rows import dict_row
 
 from nutrideby.clients.dietbox_api import (
     DietboxClient,
@@ -43,6 +44,8 @@ from nutrideby.clients.dietbox_api import (
     extract_imc_idade_from_payload,
     extract_list_payload,
     get_formula_situacao_imc,
+    get_absolute_dietbox_ui,
+    get_meal_plan_bases,
     get_mvc_feed_list,
     join_dietbox_url,
     parse_json_body,
@@ -937,6 +940,280 @@ def sync_patient_list(
     return 0
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYNC PLANOS ALIMENTARES — food.dietbox.me/v1/meal-plans
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _meal_plan_text(plans: list[dict]) -> str:
+    """Converte lista de planos alimentares em texto legível para RAG."""
+    import re as _re
+    lines: list[str] = []
+    for plan in plans:
+        desc = plan.get("Description") or ""
+        kcal = plan.get("ReferenceCalories") or plan.get("referenceCalories") or ""
+        prot_pct = plan.get("ReferenceProteinPercentage", 0) or 0
+        fat_pct  = plan.get("ReferenceFatPercentage", 0) or 0
+        carb_pct = plan.get("ReferenceCarbohydrateWeightInGrams") or plan.get("ReferenceFatPercentage") or 0
+        is_active = plan.get("IsActive", False)
+        created = (plan.get("CreatedAt") or "")[:10]
+        lines.append(f"=== PLANO ALIMENTAR {'(ATIVO)' if is_active else ''} — {created} ===")
+        if desc:
+            lines.append(f"Descrição: {desc}")
+        if kcal:
+            lines.append(f"Calorias de referência: {kcal} kcal")
+            lines.append(f"Macros: Proteína {round(prot_pct*100)}% | Gordura {round(fat_pct*100)}% | Carboidratos {round((1-prot_pct-fat_pct)*100)}%")
+        # Refeições
+        meals = plan.get("Meals") or []
+        for meal in meals:
+            meal_name = meal.get("Name") or meal.get("Description") or "Refeição"
+            meal_kcal = meal.get("TotalCalories") or ""
+            lines.append(f"\n  Refeição: {meal_name}" + (f" ({meal_kcal} kcal)" if meal_kcal else ""))
+            items = meal.get("Items") or []
+            for item in items:
+                item_desc = item.get("Description") or ""
+                qty = item.get("Quantity") or ""
+                food = item.get("Food") or {}
+                item_kcal = food.get("Calories") or ""
+                prot_g = food.get("ProteinInGrams") or ""
+                if item_desc:
+                    nutr = f" | {item_kcal} kcal, {prot_g}g prot" if item_kcal else ""
+                    lines.append(f"    - {item_desc}{nutr}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def sync_meal_plans_for_patient(settings: Settings, patient_id: str) -> int:
+    """Busca todos os planos alimentares de um paciente em food.dietbox.me e grava em documents."""
+    if not settings.dietbox_bearer_token:
+        logger.error("DIETBOX_BEARER_TOKEN não configurado")
+        return 2
+
+    food_base = "https://food.dietbox.me"
+    all_plans: list[dict] = []
+    skip = 0
+    take = 20
+
+    while True:
+        q = urllib.parse.urlencode({
+            "PatientId": patient_id,
+            "Skip": skip,
+            "Take": take,
+            "IsReminder": "false",
+            "OrderBy": "UpdatedAt",
+            "SortDirection": "Descending",
+        })
+        url = f"{food_base}/v1/meal-plans?{q}"
+        st, raw = get_absolute_dietbox_ui(url, settings.dietbox_bearer_token)
+        if st != 200:
+            logger.warning("meal-plans paciente=%s HTTP=%s", patient_id, st)
+            break
+        data = parse_json_body(raw)
+        items, total_items, _ = extract_dietbox_paged_items(data)
+        if not items:
+            break
+
+        # Buscar detalhes completos (refeições + alimentos) para cada plano
+        for plan_summary in items:
+            plan_id = plan_summary.get("Id")
+            if not plan_id:
+                all_plans.append(plan_summary)
+                continue
+            detail_url = f"{food_base}/v1/meal-plans/{plan_id}"
+            st2, raw2 = get_absolute_dietbox_ui(detail_url, settings.dietbox_bearer_token)
+            if st2 == 200:
+                detail = parse_json_body(raw2)
+                if isinstance(detail, dict) and "Data" in detail:
+                    merged = {**plan_summary, **(detail["Data"] or {})}
+                    all_plans.append(merged)
+                else:
+                    all_plans.append(plan_summary)
+            else:
+                all_plans.append(plan_summary)
+
+        skip += take
+        if total_items is not None and skip >= total_items:
+            break
+        if len(items) < take:
+            break
+
+    if not all_plans:
+        logger.info("meal-plans paciente=%s: nenhum plano", patient_id)
+        return 0
+
+    text = _meal_plan_text(all_plans)
+    bundle = {
+        "schema": "dietbox_meal_plans_v1",
+        "paciente_external_id": patient_id,
+        "plan_count": len(all_plans),
+        "plans": all_plans,
+        "text_summary": text,
+    }
+    content_text = json.dumps(bundle, ensure_ascii=False, indent=2)
+    ref = f"{food_base}/v1/meal-plans?PatientId={patient_id}"
+
+    with psycopg.connect(settings.database_url) as conn:
+        pid = upsert_patient(conn, source_system=SOURCE, external_id=str(patient_id), display_name=None, metadata={})
+        new_id = insert_document_if_new(
+            conn, patient_id=pid,
+            doc_type="dietbox_plano_alimentar",
+            content_text=content_text,
+            source_ref=ref,
+        )
+    logger.info("meal-plans paciente=%s planos=%d doc_novo=%s", patient_id, len(all_plans), new_id is not None)
+    return 0
+
+
+def sync_meal_plans_all(settings: Settings, *, patient_limit: int | None = None, sleep_ms: int = 400) -> int:
+    """Sincroniza planos alimentares de todos os pacientes Dietbox."""
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            q = "SELECT metadata->>'dietbox_paciente_id' AS ext_id FROM patients WHERE source_system='dietbox' AND metadata->>'dietbox_paciente_id' IS NOT NULL"
+            if patient_limit:
+                q += f" LIMIT {patient_limit}"
+            cur.execute(q)
+            rows = cur.fetchall()
+
+    ids = [r["ext_id"] for r in rows if r["ext_id"]]
+    logger.info("meal-plans-all: %d pacientes na fila", len(ids))
+
+    ok_count = errors = 0
+    for i, pid in enumerate(ids, 1):
+        rc = sync_meal_plans_for_patient(settings, pid)
+        if rc == 0:
+            ok_count += 1
+        else:
+            errors += 1
+        if sleep_ms > 0:
+            time.sleep(sleep_ms / 1000)
+
+    logger.info("meal-plans-all concluído: ok=%d erros=%d", ok_count, errors)
+    return 0 if errors == 0 else 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYNC QPC (Questionários pré-consulta) — api.dietbox.me/v2/qpc
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _qpc_text(qpcs: list[dict]) -> str:
+    """Converte lista de QPCs em texto legível com perguntas e respostas."""
+    import re as _re
+    lines: list[str] = []
+    for qpc in qpcs:
+        desc = qpc.get("Description") or "Questionário"
+        date_str = (qpc.get("Date") or "")[:10]
+        lines.append(f"=== {desc} ({date_str}) ===")
+        questions_raw = qpc.get("Questions") or "[]"
+        if isinstance(questions_raw, str):
+            try:
+                questions = json.loads(questions_raw)
+            except Exception:
+                questions = []
+        else:
+            questions = questions_raw or []
+
+        for q in questions:
+            if not isinstance(q, dict):
+                continue
+            qtype = q.get("type", "")
+            if qtype in ("header", "paragraph", "button", ""):
+                continue
+            label = q.get("label") or ""
+            label_clean = _re.sub(r"<[^>]+>", "", label).strip()
+            if not label_clean:
+                continue
+            val = q.get("userData") or q.get("value") or q.get("userData", "")
+            if val:
+                val_str = str(val).strip()
+                if isinstance(val, list):
+                    val_str = ", ".join(str(v) for v in val)
+                lines.append(f"P: {label_clean}")
+                lines.append(f"R: {val_str}")
+                lines.append("")
+    return "\n".join(lines)
+
+
+def sync_qpc_for_patient(settings: Settings, patient_id: str) -> int:
+    """Busca todos os QPCs (questionários pré-consulta) de um paciente e grava em documents."""
+    if not settings.dietbox_bearer_token:
+        logger.error("DIETBOX_BEARER_TOKEN não configurado")
+        return 2
+
+    all_qpcs: list[dict] = []
+    skip = 0
+    take = 20
+
+    while True:
+        q = urllib.parse.urlencode({"PatientId": patient_id, "skip": skip, "take": take})
+        url = f"https://api.dietbox.me/v2/qpc?{q}"
+        st, raw = get_absolute_dietbox_ui(url, settings.dietbox_bearer_token)
+        if st != 200:
+            logger.warning("qpc paciente=%s HTTP=%s", patient_id, st)
+            break
+        data = parse_json_body(raw)
+        items, total_items, _ = extract_dietbox_paged_items(data)
+        if not items:
+            break
+        all_qpcs.extend(items)
+        skip += take
+        if total_items is not None and skip >= total_items:
+            break
+        if len(items) < take:
+            break
+
+    if not all_qpcs:
+        logger.info("qpc paciente=%s: nenhum QPC", patient_id)
+        return 0
+
+    text = _qpc_text(all_qpcs)
+    bundle = {
+        "schema": "dietbox_qpc_v1",
+        "paciente_external_id": patient_id,
+        "qpc_count": len(all_qpcs),
+        "qpcs": all_qpcs,
+        "text_summary": text,
+    }
+    content_text = json.dumps(bundle, ensure_ascii=False, indent=2)
+    ref = f"https://api.dietbox.me/v2/qpc?PatientId={patient_id}"
+
+    with psycopg.connect(settings.database_url) as conn:
+        pid = upsert_patient(conn, source_system=SOURCE, external_id=str(patient_id), display_name=None, metadata={})
+        new_id = insert_document_if_new(
+            conn, patient_id=pid,
+            doc_type="dietbox_qpc_respostas",
+            content_text=content_text,
+            source_ref=ref,
+        )
+    logger.info("qpc paciente=%s total=%d doc_novo=%s", patient_id, len(all_qpcs), new_id is not None)
+    return 0
+
+
+def sync_qpc_all(settings: Settings, *, patient_limit: int | None = None, sleep_ms: int = 300) -> int:
+    """Sincroniza QPCs de todos os pacientes Dietbox."""
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            q = "SELECT metadata->>'dietbox_paciente_id' AS ext_id FROM patients WHERE source_system='dietbox' AND metadata->>'dietbox_paciente_id' IS NOT NULL"
+            if patient_limit:
+                q += f" LIMIT {patient_limit}"
+            cur.execute(q)
+            rows = cur.fetchall()
+
+    ids = [r["ext_id"] for r in rows if r["ext_id"]]
+    logger.info("qpc-all: %d pacientes na fila", len(ids))
+
+    ok_count = errors = 0
+    for pid in ids:
+        rc = sync_qpc_for_patient(settings, pid)
+        if rc == 0:
+            ok_count += 1
+        else:
+            errors += 1
+        if sleep_ms > 0:
+            time.sleep(sleep_ms / 1000)
+
+    logger.info("qpc-all concluído: ok=%d erros=%d", ok_count, errors)
+    return 0 if errors == 0 else 1
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -1105,6 +1382,44 @@ def main(argv: list[str] | None = None) -> int:
         default=1,
         help="Máximo de páginas (0 = todas até acabar a lista; usar com --take 50–100 para ingestão completa)",
     )
+    p.add_argument(
+        "--sync-meal-plans-all",
+        action="store_true",
+        help="Sincroniza planos alimentares de todos os pacientes Dietbox (food.dietbox.me)",
+    )
+    p.add_argument(
+        "--sync-meal-plans-patient",
+        metavar="PACIENTE_ID",
+        help="Sincroniza planos alimentares de um paciente específico",
+    )
+    p.add_argument(
+        "--sync-qpc-all",
+        action="store_true",
+        help="Sincroniza questionários pré-consulta (QPC) de todos os pacientes Dietbox",
+    )
+    p.add_argument(
+        "--sync-qpc-patient",
+        metavar="PACIENTE_ID",
+        help="Sincroniza QPCs de um paciente específico",
+    )
+    p.add_argument(
+        "--sync-all-clinical",
+        action="store_true",
+        help="Executa sync completo: meal-plans + QPC + meta para todos os pacientes",
+    )
+    p.add_argument(
+        "--clinical-limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Máximo de pacientes para --sync-all-clinical / --sync-meal-plans-all / --sync-qpc-all (0=todos)",
+    )
+    p.add_argument(
+        "--clinical-sleep-ms",
+        type=int,
+        default=350,
+        help="Pausa entre pacientes para syncs clínicos",
+    )
     act = p.add_mutually_exclusive_group()
     act.add_argument(
         "--include-inactive",
@@ -1175,6 +1490,24 @@ def main(argv: list[str] | None = None) -> int:
             resume_run_id=args.prontuario_resume_run_id,
             workers=max(1, args.prontuario_workers),
         )
+    if args.sync_meal_plans_patient:
+        return sync_meal_plans_for_patient(settings, args.sync_meal_plans_patient)
+    if args.sync_meal_plans_all:
+        lim = args.clinical_limit if args.clinical_limit > 0 else None
+        return sync_meal_plans_all(settings, patient_limit=lim, sleep_ms=args.clinical_sleep_ms)
+    if args.sync_qpc_patient:
+        return sync_qpc_for_patient(settings, args.sync_qpc_patient)
+    if args.sync_qpc_all:
+        lim = args.clinical_limit if args.clinical_limit > 0 else None
+        return sync_qpc_all(settings, patient_limit=lim, sleep_ms=args.clinical_sleep_ms)
+    if args.sync_all_clinical:
+        lim = args.clinical_limit if args.clinical_limit > 0 else None
+        slp = args.clinical_sleep_ms
+        logger.info("sync-all-clinical: meal-plans + QPC + meta para todos os pacientes")
+        sync_meal_plans_all(settings, patient_limit=lim, sleep_ms=slp)
+        sync_qpc_all(settings, patient_limit=lim, sleep_ms=slp)
+        lim2 = args.meta_all_limit if args.meta_all_limit > 0 else None
+        return sync_meta_all(settings, take=50, max_pages_per_patient=100, patient_limit=lim2, sleep_ms=slp)
     if args.sync_one:
         return sync_one_prontuario(settings, args.sync_one)
     if args.sync_patient:
