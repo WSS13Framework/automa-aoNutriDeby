@@ -148,6 +148,12 @@ def get_patients_by_profile(
             (p.metadata->>'LastConsultation')::date
         ) IS NOT NULL
         {days_filter}
+        AND NOT EXISTS (
+            SELECT 1 FROM inbound_messages im
+            WHERE im.patient_id = p.id
+              AND im.message_type = 'hermes_outbound'
+              AND im.received_at::date = CURRENT_DATE
+        )
         ORDER BY last_activity_date ASC NULLS LAST
         LIMIT %s
     """
@@ -156,6 +162,136 @@ def get_patients_by_profile(
         cur.execute(sql, [limit])
         return cur.fetchall()
 
+
+
+def get_patient_clinical_context(conn, patient_id: str) -> dict:
+    """
+    Cruza todos os dados clínicos disponíveis do paciente para montar
+    o contexto "onde ele parou" — gatilho dopaminérgico de reconhecimento.
+
+    Retorna dict com:
+      - metas: lista de metas da nutricionista (meta export)
+      - plano_resumo: objetivo + kcal + macros do plano ativo
+      - comportamento: respostas do QPC sobre alimentação emocional
+      - ultima_consulta_qpc: data da última consulta registrada no QPC
+      - texto_completo: texto consolidado para o prompt
+    """
+    import json as _json
+    from psycopg.rows import dict_row as _dict_row
+
+    result = {
+        "metas": [],
+        "plano_resumo": "",
+        "comportamento": "",
+        "ultima_consulta_qpc": "",
+        "texto_completo": "",
+    }
+
+    with conn.cursor(row_factory=_dict_row) as cur:
+        cur.execute("""
+            SELECT doc_type, content_text, collected_at
+            FROM documents
+            WHERE patient_id = (
+              SELECT id FROM patients
+              WHERE (metadata->>'dietbox_paciente_id' = %s
+                     OR (source_system='dietbox' AND external_id = %s))
+              LIMIT 1
+            )
+            AND doc_type IN ('dietbox_meta_export','dietbox_plano_alimentar','dietbox_qpc_respostas')
+            ORDER BY doc_type, collected_at DESC
+        """, (patient_id, patient_id))
+        docs = cur.fetchall()
+
+    for doc in docs:
+        ct = doc["content_text"] or ""
+        dtype = doc["doc_type"]
+
+        if not ct.startswith("{"):
+            continue
+        try:
+            data = _json.loads(ct)
+        except Exception:
+            continue
+
+        summary = data.get("text_summary", "")
+
+        if dtype == "dietbox_meta_export":
+            items = data.get("items", [])
+            for item in items:
+                nome = item.get("nome") or item.get("name") or ""
+                desc = item.get("descricao") or item.get("description") or ""
+                if nome:
+                    result["metas"].append(f"{nome}: {desc[:120]}" if desc else nome)
+
+        elif dtype == "dietbox_plano_alimentar":
+            if result["plano_resumo"]:
+                continue  # só o mais recente
+            plans = data.get("plans", [])
+            for plan in plans:
+                if plan.get("IsActive"):
+                    descricao = plan.get("Description") or ""
+                    kcal = plan.get("ReferenceCalories") or ""
+                    prot = round((plan.get("ReferenceProteinPercentage") or 0) * 100)
+                    result["plano_resumo"] = (
+                        f"Plano ativo: {descricao[:200]}. "
+                        f"Meta: {kcal} kcal/dia, {prot}% proteína."
+                    )
+                    break
+            if not result["plano_resumo"] and plans:
+                # pega o primeiro mesmo sem IsActive
+                p = plans[0]
+                descricao = p.get("Description") or ""
+                kcal = p.get("ReferenceCalories") or ""
+                result["plano_resumo"] = f"Último plano: {descricao[:200]}. Meta: {kcal} kcal/dia."
+
+        elif dtype == "dietbox_qpc_respostas":
+            if result["comportamento"]:
+                continue
+            qpcs = data.get("qpcs", [])
+            if qpcs:
+                # pega o QPC mais recente com respostas
+                ultimo = qpcs[0]
+                result["ultima_consulta_qpc"] = (ultimo.get("Date") or "")[:10]
+                # extrai respostas relevantes (comportamento alimentar)
+                questions_raw = ultimo.get("Questions") or "[]"
+                if isinstance(questions_raw, str):
+                    try:
+                        questions = _json.loads(questions_raw)
+                    except Exception:
+                        questions = []
+                else:
+                    questions = questions_raw or []
+
+                comportamentos = []
+                for q in questions:
+                    if not isinstance(q, dict):
+                        continue
+                    label = re.sub(r"<[^>]+>", "", q.get("label", "")).strip()
+                    val = q.get("userData") or q.get("value") or ""
+                    if val and label and q.get("type") not in ("header", "paragraph", "button"):
+                        if any(kw in label.lower() for kw in
+                               ["objetivo", "dificuldade", "principal", "gostaria",
+                                "hábito", "motivo", "ansio", "emocion", "estress",
+                                "exerc", "sono", "médica", "remédio"]):
+                            comportamentos.append(f"- {label}: {str(val)[:80]}")
+                        if len(comportamentos) >= 5:
+                            break
+                result["comportamento"] = "\n".join(comportamentos)
+
+    # Monta texto completo para o prompt
+    partes = []
+    if result["metas"]:
+        metas_str = "; ".join(result["metas"][:3])
+        partes.append(f"Metas definidas pela nutricionista: {metas_str}")
+    if result["plano_resumo"]:
+        partes.append(result["plano_resumo"])
+    if result["comportamento"]:
+        partes.append(f"Respostas da anamnese:\n{result['comportamento']}")
+    if result["ultima_consulta_qpc"]:
+        partes.append(f"Última consulta registrada: {result['ultima_consulta_qpc']}")
+
+    result["texto_completo"] = "\n\n".join(partes)
+    return result
 
 def get_prontuario(conn: psycopg.Connection, patient_id: str) -> str:
     with conn.cursor(row_factory=dict_row) as cur:
@@ -197,8 +333,8 @@ def _build_prompt(
     prontuario: str,
     profile: str,
     nutricionista_nome: str,
-) -> tuple[str, str]:
-    """Retorna (system_prompt, user_prompt) com goal_statement embutido."""
+) -> tuple[str, str, str]:
+    """Retorna (static_system, dynamic_system, user_prompt) para prompt caching."""
     goal = PROFILES[profile]["goal_statement"]
     nome      = patient["display_name"] or "paciente"
     primeiro  = nome.split()[0]
@@ -206,45 +342,72 @@ def _build_prompt(
     ocupacao  = patient.get("ocupacao") or ""
     ultima    = (patient.get("ultima_consulta") or "")[:10] or "algum tempo"
     dias      = patient.get("days_inactive")
-    contexto  = f"Prontuário resumido: {prontuario[:500]}" if prontuario else "Sem prontuário detalhado."
+    # Usa contexto clínico rico se disponível, senão cai no prontuário básico
+    if prontuario and len(prontuario) > 100:
+        contexto = prontuario[:1200]
+    else:
+        contexto = "Sem dados clínicos detalhados disponíveis."
 
-    system_prompt = (
+    # Parte estática: identidade + objetivo + contexto clínico (cacheável por perfil)
+    static_system = (
         f"Você é a assistente virtual da nutricionista {nutricionista_nome}.\n\n"
         f"OBJETIVO DESTA MENSAGEM: {goal}\n\n"
+        f"CONTEXTO CLÍNICO DO PACIENTE:\n{contexto}\n\n"
+        "ESTRATÉGIA DE REENGAJAMENTO — GATILHO DE RECONHECIMENTO:\n"
+        "A mensagem deve provar que a nutricionista LEMBRA EXATAMENTE onde o paciente parou.\n"
+        "Use os dados clínicos acima para mencionar algo específico:\n"
+        "  - Uma meta que o paciente estava trabalhando\n"
+        "  - Um objetivo do plano alimentar (ex: ganho de massa, perda de gordura)\n"
+        "  - Um hábito ou desafio que ele mencionou na consulta\n"
+        "Isso ativa reconhecimento e dopamina — o paciente sente que não foi esquecido.\n\n"
         "Regras absolutas:\n"
         "- Máximo 100 palavras\n"
-        "- Tom humano, acolhedor, sem pressão\n"
-        "- Mencione algo específico do prontuário se houver\n"
-        f"- Mostre que {nutricionista_nome} lembra do paciente\n"
-        "- Termine com UMA pergunta simples sobre como está hoje\n"
-        "- Não mencione preço nem plano\n"
+        "- Tom humano, acolhedor, sem pressão nem cobrança\n"
+        "- Mencione UM detalhe específico do histórico do paciente\n"
+        f"- Mostre que {nutricionista_nome} lembra desta pessoa especificamente\n"
+        "- Termine com UMA pergunta aberta sobre como está hoje\n"
+        "- Não mencione preço, plano ou pagamento\n"
         f"- Assine como: Assistente da {nutricionista_nome} 🥗\n"
-        "- Escreva apenas a mensagem, sem explicações"
+        "- Escreva apenas a mensagem"
     )
 
     dias_texto = f"{dias} dias" if dias is not None else "algum tempo"
-    user_prompt = (
-        f"Escreva uma mensagem de WhatsApp para o paciente {primeiro}.\n\n"
-        f"Dados:\n"
-        f"- Nome: {primeiro}\n"
-        f"- Idade: {idade} anos\n"
-        f"- Ocupação: {ocupacao}\n"
-        f"- Última atividade: {ultima} ({dias_texto} atrás)\n"
-        f"- {contexto}"
+
+    # Parte dinâmica: dados específicos do paciente (não cacheável)
+    dynamic_system = (
+        f"Paciente: {primeiro} | Idade: {idade} anos | Ocupação: {ocupacao}\n"
+        f"Última atividade: {ultima} ({dias_texto} atrás)"
     )
 
-    return system_prompt, user_prompt
+    user_prompt = f"Escreva uma mensagem de WhatsApp personalizada para {primeiro}."
+
+    return static_system, dynamic_system, user_prompt
 
 
-def _claude(system: str, user: str) -> str:
+def _claude(static_system: str, dynamic_system: str, user: str) -> str:
     import anthropic
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     msg = client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=256,
-        system=system,
+        timeout=30.0,
+        system=[
+            {
+                "type": "text",
+                "text": static_system,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
+                "text": dynamic_system,
+            },
+        ],
         messages=[{"role": "user", "content": user}],
     )
+    usage = msg.usage
+    cache_read    = getattr(usage, "cache_read_input_tokens", 0) or 0
+    cache_created = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    logger.info("cache: read=%d created=%d input=%d", cache_read, cache_created, usage.input_tokens)
     return msg.content[0].text.strip()
 
 
@@ -269,13 +432,14 @@ def gerar_mensagem(
     profile: str,
     nutricionista_nome: str = "Dra. Débora",
 ) -> str:
-    system, user = _build_prompt(patient, prontuario, profile, nutricionista_nome)
+    static_system, dynamic_system, user = _build_prompt(patient, prontuario, profile, nutricionista_nome)
     primeiro = (patient["display_name"] or "paciente").split()[0]
+    system = f"{static_system}\n\n{dynamic_system}"  # combinado para fallback DeepSeek
 
     if ANTHROPIC_API_KEY:
         try:
             logger.info("LLM: Claude (%s)", ANTHROPIC_MODEL)
-            return _claude(system, user)
+            return _claude(static_system, dynamic_system, user)
         except Exception as exc:
             logger.warning("Claude falhou (%s) — usando DeepSeek como fallback", exc)
 
@@ -339,7 +503,11 @@ def run(
             dias      = p.get("days_inactive")
 
             prontuario = get_prontuario(conn, p["id"])
-            mensagem   = gerar_mensagem(p, prontuario, profile, nutricionista_nome)
+            # Cruza dados clínicos reais (plano alimentar + QPC + metas)
+            dietbox_id = str(p.get("id") or "")
+            ctx = get_patient_clinical_context(conn, dietbox_id)
+            contexto_clinico = ctx["texto_completo"] or prontuario
+            mensagem   = gerar_mensagem(p, contexto_clinico, profile, nutricionista_nome)
 
             logger.info("=" * 50)
             logger.info("Para: %s (%s) | %s dias inativo", nome, phone, dias)
@@ -351,6 +519,18 @@ def run(
                     sid, status = enviar_twilio(phone, mensagem)
                     logger.info("ENVIADO: sid=%s status=%s", sid, status)
                     enviados += 1
+                    # Registra envio para deduplicação — impede reenvio no mesmo dia
+                    with conn.cursor() as _cur:
+                        _cur.execute(
+                            """
+                            INSERT INTO inbound_messages
+                              (patient_id, phone, message_type, reply_body, replied_at)
+                            VALUES (%s, %s, 'hermes_outbound', %s, NOW())
+                            ON CONFLICT DO NOTHING
+                            """,
+                            (str(p["id"]), phone, mensagem[:500]),
+                        )
+                        conn.commit()
                 except Exception as exc:
                     logger.error("ERRO ao enviar: %s", exc)
                     erros += 1

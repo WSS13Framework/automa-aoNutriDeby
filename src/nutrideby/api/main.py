@@ -1,8 +1,12 @@
 
 from __future__ import annotations
+import hashlib
+import hmac
 import json
+import os
 from datetime import datetime
 
+import asyncio
 import logging
 import secrets
 from collections.abc import AsyncIterator
@@ -746,7 +750,10 @@ async def twilio_inbound(request: Request, settings: Annotated[Settings, Depends
         return {"status": "ignored"}
 
     # Processa em background para Twilio não reenviar por timeout
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
     loop.run_in_executor(
         None,
         _process_inbound_bg,
@@ -772,7 +779,22 @@ def _process_inbound_bg(from_raw, body, num_media, media_url, media_type, settin
 
 
 
-_META_VERIFY_TOKEN = "nutrideby_webhook_2026"
+_META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "nutrideby_webhook_2026")
+_META_APP_SECRET   = os.getenv("META_APP_SECRET", "")
+
+
+def _verify_meta_signature(body: bytes, signature_header: str | None) -> bool:
+    """Valida assinatura HMAC-SHA256 do payload Meta. RFC: X-Hub-Signature-256: sha256=<hex>."""
+    if not _META_APP_SECRET:
+        return True  # sem secret configurado, aceita (ambiente dev)
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(
+        _META_APP_SECRET.encode("utf-8"),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(signature_header[7:], expected)
 
 
 @app.get("/hooks/whatsapp/inbound")
@@ -791,9 +813,17 @@ async def meta_whatsapp_verify(request: Request) -> Response:
 
 
 @app.post("/hooks/whatsapp/inbound")
-async def meta_whatsapp_inbound(request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> dict:
+async def meta_whatsapp_inbound(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    x_hub_signature_256: str | None = Header(None),
+) -> dict:
     """Recebe mensagens WhatsApp Business da Meta e aciona RAG."""
-    import asyncio
+    raw_body = await request.body()
+    if not _verify_meta_signature(raw_body, x_hub_signature_256):
+        logger.warning("Meta WhatsApp: assinatura inválida — possível payload forjado")
+        raise HTTPException(status_code=403, detail="Assinatura inválida")
+
     try:
         payload = await request.json()
     except Exception:
@@ -830,7 +860,10 @@ async def meta_whatsapp_inbound(request: Request, settings: Annotated[Settings, 
 
     logger.info("Meta WhatsApp inbound: from=%s type=%s body=%s", from_raw, "image" if num_media else "text", body[:80])
 
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
     loop.run_in_executor(
         None,
         _process_inbound_bg,
