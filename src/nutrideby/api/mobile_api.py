@@ -186,18 +186,20 @@ def register_patient(
 
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            # 1. Busca perfil Dietbox existente por CPF (metadata) ou email
+            # 1. Busca perfil existente:
+            #    csv_import → coluna cpf ou email
+            #    dietbox    → metadata->>'Email' (CPF inexistente no Dietbox)
             cur.execute(
                 """
                 SELECT id, display_name, source_system
                 FROM patients
                 WHERE cpf = %s
                    OR email = %s
-                   OR metadata->>'Cpf' = %s
-                   OR metadata->>'CPF' = %s
+                   OR LOWER(metadata->>'Email') = LOWER(%s)
+                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END
                 LIMIT 1
                 """,
-                (payload.cpf, payload.email, payload.cpf, payload.cpf),
+                (payload.cpf, payload.email, payload.email),
             )
             existing = cur.fetchone()
 
@@ -308,6 +310,7 @@ def get_patient_profile(
                 FROM dietbox_medidas
                 WHERE patient_id = %s
                 ORDER BY data_avaliacao DESC NULLS LAST
+                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END
                 LIMIT 1
                 """,
                 (patient_id,),
@@ -321,6 +324,7 @@ def get_patient_profile(
                 FROM dietbox_prescricoes
                 WHERE patient_id = %s
                 ORDER BY data_prescricao DESC NULLS LAST
+                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END
                 LIMIT 1
                 """,
                 (patient_id,),
