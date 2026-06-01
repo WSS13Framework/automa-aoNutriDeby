@@ -177,6 +177,7 @@ services:
     volumes:
       - ./src:/app/src:ro
       - /var/log/nutrideby:/var/log/nutrideby:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "127.0.0.1:8501:8501"
     depends_on:

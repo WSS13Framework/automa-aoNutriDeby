@@ -309,4 +309,111 @@ c2.metric("Food Logs", int(df_fl.iloc[0]["total"]) if not df_fl.empty else 0)
 df_cr = query("SELECT COUNT(*) AS total FROM clinical_records WHERE status = 'ASSINADO'")
 c3.metric("Records Assinados", int(df_cr.iloc[0]["total"]) if not df_cr.empty else 0)
 
+
+# ═══════════════════════════════════════════════════════
+# MÓDULO 9 — PAINEL DE CONTROLE DE WORKERS
+# ═══════════════════════════════════════════════════════
+st.divider()
+st.subheader("⚙️ Controle de Workers")
+
+def run_docker(cmd: list[str]) -> tuple[bool, str]:
+    """Executa comando Docker via socket montado."""
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=60
+        )
+        ok  = result.returncode == 0
+        out = (result.stdout + result.stderr).strip()
+        return ok, out[:800]
+    except FileNotFoundError:
+        return False, "Docker CLI não disponível no container. Verifique a montagem do socket."
+    except subprocess.TimeoutExpired:
+        return False, "Timeout — comando demorou mais de 60s."
+    except Exception as e:
+        return False, str(e)
+
+WORKERS = {
+    "🔄 Worker Kiwify":         ("restart", "automa-aonutrideby-worker-kiwify-1"),
+    "🤖 API (FastAPI)":         ("restart", "automa-aonutrideby-api-1"),
+    "📦 Chunk Documents":       ("exec",    "chunk_documents"),
+    "🧠 Embed Chunks (RAG)":    ("exec",    "embed_chunks"),
+    "🌿 Hermes dry-run":        ("hermes_dry", "inativo_30"),
+    "📨 Dietbox Sync (meta)":   ("exec",    "dietbox_meta"),
+}
+
+cols = st.columns(3)
+results_placeholder = st.empty()
+
+for idx, (label, (action, target)) in enumerate(WORKERS.items()):
+    col = cols[idx % 3]
+    with col:
+        if st.button(label, use_container_width=True, key=f"btn_{idx}"):
+            with st.spinner(f"Executando {label}..."):
+                if action == "restart":
+                    ok, out = run_docker(["docker", "restart", target])
+                    msg = f"✅ `{target}` reiniciado" if ok else f"❌ Erro: {out}"
+
+                elif action == "exec" and target == "chunk_documents":
+                    ok, out = run_docker([
+                        "docker", "exec", "automa-aonutrideby-api-1",
+                        "python3", "-m", "nutrideby.workers.chunk_documents"
+                    ])
+                    msg = f"✅ chunk_documents concluído" if ok else f"❌ {out}"
+
+                elif action == "exec" and target == "embed_chunks":
+                    ok, out = run_docker([
+                        "docker", "exec", "automa-aonutrideby-api-1",
+                        "python3", "-m", "nutrideby.workers.embed_chunks"
+                    ])
+                    msg = f"✅ embed_chunks concluído" if ok else f"❌ {out}"
+
+                elif action == "exec" and target == "dietbox_meta":
+                    ok, out = run_docker([
+                        "docker", "exec", "automa-aonutrideby-api-1",
+                        "python3", "-m", "nutrideby.workers.dietbox_sync",
+                        "--sync-all-clinical", "--clinical-limit", "50"
+                    ])
+                    msg = f"✅ Sync Dietbox iniciado" if ok else f"❌ {out}"
+
+                elif action == "hermes_dry":
+                    ok, out = run_docker([
+                        "docker", "exec", "automa-aonutrideby-api-1",
+                        "python3", "-m", "nutrideby.agents.hermes_agent",
+                        "--profile", target, "--limit", "3", "--dry-run"
+                    ])
+                    msg = f"✅ Hermes dry-run OK" if ok else f"❌ {out}"
+                    if ok:
+                        st.code(out[:600], language="bash")
+                else:
+                    msg, ok = "Ação desconhecida", False
+
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+st.divider()
+st.subheader("🚀 Hermes — Disparo Manual")
+
+with st.form("hermes_manual"):
+    col_a, col_b, col_c = st.columns(3)
+    perfil  = col_a.selectbox("Perfil", ["inativo_30", "inativo_14", "inativo_7", "ativo"])
+    limite  = col_b.number_input("Limite", min_value=1, max_value=50, value=5)
+    dry_run = col_c.checkbox("Dry-run (não envia)", value=True)
+
+    if st.form_submit_button("▶️ Disparar Hermes", use_container_width=True):
+        flags = ["--dry-run"] if dry_run else ["--send"]
+        cmd = [
+            "docker", "exec", "automa-aonutrideby-api-1",
+            "python3", "-m", "nutrideby.agents.hermes_agent",
+            "--profile", perfil, "--limit", str(int(limite)),
+        ] + flags
+        with st.spinner(f"Hermes {perfil} limit={limite} {'dry-run' if dry_run else 'ENVIANDO'}..."):
+            ok, out = run_docker(cmd)
+        if ok:
+            st.success(f"✅ Hermes concluído — {perfil}")
+        else:
+            st.error(f"❌ Erro: {out[:300]}")
+        st.code(out, language="bash")
+
 st.caption("NutriDeby Mission Control • auto-refresh: clique Atualizar")
