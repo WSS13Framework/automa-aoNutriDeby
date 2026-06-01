@@ -16,26 +16,115 @@ st.set_page_config(
     page_icon="🚀",
 )
 
-# ── Autenticação básica ───────────────────────────────────────────────────────
-OPS_USER     = os.getenv("OPS_USER", "admin")
-OPS_PASSWORD = os.getenv("OPS_PASSWORD", "")
+# ── Autenticação Google OAuth ────────────────────────────────────────────────
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+OPS_ALLOWED_EMAILS   = [
+    e.strip() for e in
+    os.getenv("OPS_ALLOWED_EMAILS", "wss13.framework@gmail.com,nutrideboraoliver@gmail.com").split(",")
+    if e.strip()
+]
+REDIRECT_URI = os.getenv("OPS_REDIRECT_URI", "https://ops.nutrideby.com/")
+
+
+def _google_auth_url() -> str:
+    import urllib.parse
+    params = {
+        "client_id":     GOOGLE_CLIENT_ID,
+        "redirect_uri":  REDIRECT_URI,
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "access_type":   "online",
+        "prompt":        "select_account",
+    }
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+
+
+def _exchange_code(code: str) -> dict | None:
+    import urllib.parse, urllib.request, json
+    data = urllib.parse.urlencode({
+        "code":          code,
+        "client_id":     GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri":  REDIRECT_URI,
+        "grant_type":    "authorization_code",
+    }).encode()
+    try:
+        req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        st.error(f"Erro ao trocar código: {e}")
+        return None
+
+
+def _get_userinfo(access_token: str) -> dict | None:
+    import urllib.request, json
+    try:
+        req = urllib.request.Request(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
 
 def _check_auth() -> bool:
-    if not OPS_PASSWORD:
-        return True  # dev: sem senha configurada, libera
-    if "authenticated" in st.session_state and st.session_state.authenticated:
+    # Já autenticado nesta sessão
+    if st.session_state.get("google_email"):
         return True
-    st.title("🔒 NutriDeby Mission Control")
-    with st.form("login"):
-        user = st.text_input("Usuário")
-        pwd  = st.text_input("Senha", type="password")
-        if st.form_submit_button("Entrar"):
-            if user == OPS_USER and pwd == OPS_PASSWORD:
-                st.session_state.authenticated = True
+
+    # Sem Google configurado — libera (dev)
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        st.session_state["google_email"] = "dev@local"
+        return True
+
+    # Retorno do OAuth com ?code=...
+    params = st.query_params
+    code = params.get("code")
+    if code:
+        tokens = _exchange_code(code)
+        if tokens and "access_token" in tokens:
+            info = _get_userinfo(tokens["access_token"])
+            email = (info or {}).get("email", "")
+            if email in OPS_ALLOWED_EMAILS:
+                st.session_state["google_email"] = email
+                st.session_state["google_name"]  = (info or {}).get("name", email)
+                st.query_params.clear()
                 st.rerun()
             else:
-                st.error("Credenciais inválidas")
+                st.error(f"❌ Acesso negado para {email}")
+                st.query_params.clear()
+        return False
+
+    # Tela de login
+    st.markdown("""
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                height:70vh;gap:24px;font-family:sans-serif;">
+      <div style="font-size:2.5rem;">🚀</div>
+      <div style="font-size:1.6rem;font-weight:700;color:#1a1a2e;">NutriDeby Mission Control</div>
+      <div style="color:#666;font-size:1rem;">Acesso restrito à equipe autorizada</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    auth_url = _google_auth_url()
+    st.markdown(f"""
+    <div style="display:flex;justify-content:center;margin-top:-40px;">
+      <a href="{auth_url}" target="_self" style="
+        background:#4285F4;color:white;padding:12px 28px;border-radius:8px;
+        text-decoration:none;font-size:1rem;font-weight:600;
+        display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,.15);">
+        <svg width="20" height="20" viewBox="0 0 48 48">
+          <path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 5.1 29.6 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21c10.5 0 20-7.6 20-21 0-1.4-.1-2.7-.5-4z"/>
+        </svg>
+        Entrar com Google
+      </a>
+    </div>
+    """, unsafe_allow_html=True)
     return False
+
 
 if not _check_auth():
     st.stop()
@@ -62,7 +151,16 @@ def query(sql: str, params=None) -> pd.DataFrame:
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-st.title("🚀 NutriDeby — Mission Control")
+user_name = st.session_state.get("google_name") or st.session_state.get("google_email", "")
+col_title, col_user = st.columns([5, 1])
+with col_title:
+    st.title("🚀 NutriDeby — Mission Control")
+with col_user:
+    if user_name:
+        st.caption(f"👤 {user_name}")
+        if st.button("Sair", key="logout"):
+            st.session_state.clear()
+            st.rerun()
 st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
 col_r, _ = st.columns([1, 5])

@@ -166,6 +166,8 @@ services:
              --server.port 8501
              --server.address 0.0.0.0
              --server.headless true
+             --server.enableCORS false
+             --server.enableXsrfProtection false
              --browser.gatherUsageStats false"
     env_file: .env
     environment:
@@ -174,6 +176,10 @@ services:
       - DB_USER=nutrideby
       - DB_PORT=5432
       - HERMES_LOG=/var/log/nutrideby/hermes.log
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - OPS_REDIRECT_URI=https://ops.nutrideby.com/
+      - OPS_ALLOWED_EMAILS=${OPS_ALLOWED_EMAILS:-wss13.framework@gmail.com,nutrideboraoliver@gmail.com}
     volumes:
       - ./src:/app/src:ro
       - /var/log/nutrideby:/var/log/nutrideby:ro
