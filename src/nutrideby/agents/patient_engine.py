@@ -27,12 +27,61 @@ from psycopg.rows import dict_row
 
 logger = logging.getLogger(__name__)
 
+from nutrideby.agents.prompts.chameleon_engine import ChameleonEngine
+
 # Número da nutricionista para alertas (configurável via env)
 import os
 _NUTRI_NOTIFY_RAW = os.getenv(
     "NUTRI_NOTIFY_PHONE",
     os.getenv("TWILIO_TEST_NUMBER", ""),
 ).replace("whatsapp:", "").replace("+", "").strip()
+
+
+
+# ── CLAUDE WITH PROMPT CACHING ────────────────────────────────────────────────
+
+def _call_claude_with_cache(
+    static_context: str,
+    dynamic_mission: str,
+    user_message: str,
+    max_tokens: int = 400,
+) -> str:
+    """
+    Chama Claude com prompt caching:
+      - static_context: contexto clínico + prontuário (cacheável)
+      - dynamic_mission: nome do paciente, dias, contexto dinâmico (não cacheável)
+    """
+    import anthropic
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    model   = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY não configurada")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=[
+            {
+                "type": "text",
+                "text": static_context,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
+                "text": dynamic_mission,
+            },
+        ],
+        messages=[{"role": "user", "content": user_message}],
+    )
+    usage = msg.usage
+    cache_read    = getattr(usage, "cache_read_input_tokens", 0) or 0
+    cache_created = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    logger.info(
+        "claude cache: read=%d created=%d input=%d",
+        cache_read, cache_created, usage.input_tokens,
+    )
+    return msg.content[0].text.strip()
 
 
 # ── 1. CONVERSATION MEMORY ────────────────────────────────────────────────────
@@ -546,6 +595,23 @@ def _handle_image_feedback(
     return reply, description
 
 
+def _get_rag_context(patient_id: uuid.UUID, query: str, settings: Any) -> str:
+    """Busca contexto RAG do banco vetorial para o prompt do Chameleon."""
+    try:
+        from nutrideby.rag.retrieve_with_cache import retrieve_patient_chunks
+        import psycopg
+        with psycopg.connect(settings.database_url) as conn:
+            _, hits, _ = retrieve_patient_chunks(
+                conn, patient_id=patient_id, query=query, k=4, settings=settings
+            )
+        if not hits:
+            return ""
+        return "\n\n---\n\n".join(h.get("text", "")[:400] for h in hits if h.get("text"))
+    except Exception as exc:
+        logger.debug("rag_context falhou: %s", exc)
+        return ""
+
+
 def _handle_text_goal_aware(
     conn: psycopg.Connection,
     patient_id: uuid.UUID,
@@ -555,40 +621,58 @@ def _handle_text_goal_aware(
     memory: list[dict],
     settings: Any,
 ) -> str:
-    """Resposta textual com consciência do objetivo e memória de conversa."""
-    from nutrideby.rag.analyze_patient import run_patient_analysis
-
+    """Resposta textual via ChameleonEngine + Claude com prompt adaptado ao perfil."""
     memory_text = _memory_as_text(memory)
-    goal_ctx    = f"Objetivo do paciente: {goal_statement}" if goal_statement else ""
 
-    query = (
-        f"{memory_text}\n\n"
-        f"{goal_ctx}\n\n"
-        f"Mensagem atual do paciente: '{body}'\n\n"
-        "Responda em português, máximo 3 frases, tom acolhedor e personalizado. "
-        "Se relevante, conecte ao objetivo do paciente."
+    # Contexto RAG do banco vetorial
+    rag_context = _get_rag_context(patient_id, body, settings)
+
+    # Padrão comportamental do paciente (ESCAPE, CONFRONTO, RETORNO, CULPA)
+    pattern = ChameleonEngine.get_patient_pattern(conn, patient_id)
+
+    patient_data = {
+        "name":                  nome,
+        "goal_statement":        goal_statement or "",
+        "padrao_comportamental": pattern,
+    }
+
+    # Parte estática (cacheável): identidade + objetivo + RAG + diretriz de tom
+    static_context = ChameleonEngine.build_system_prompt(patient_data, rag_context)
+
+    # Parte dinâmica: histórico recente + mensagem atual
+    dynamic_context = (
+        f"{memory_text}\n\nMensagem atual: {body}"
+        if memory_text else
+        f"Mensagem atual: {body}"
     )
 
+    user_message = "Responda à mensagem do paciente acima."
+
     try:
-        result = run_patient_analysis(
-            patient_id=patient_id,
-            query=query,
-            settings=settings,
-            persona="clinical",
-            use_genai=False,
-            k=5,
-            max_tokens=400,
+        reply = _call_claude_with_cache(
+            static_context=static_context,
+            dynamic_mission=dynamic_context,
+            user_message=user_message,
+            max_tokens=300,
         )
-        analysis = result.get("analysis", "")
-        if len(analysis) > 450:
-            analysis = analysis[:440] + "…"
-        return f"{analysis}\n\nAcesse o app NutriDeby para mais detalhes! 💚"
+        logger.info("ChameleonEngine: padrão=%s nome=%s", pattern or "neutro", nome)
+        return reply
     except Exception as exc:
-        logger.warning("rag analysis failed: %s", exc)
-        return (
-            f"Oi, {nome}! 😊 Recebi sua mensagem. "
-            "Confira seu painel completo no app NutriDeby! 💚"
-        )
+        logger.warning("ChameleonEngine falhou (%s) — fallback RAG", exc)
+        try:
+            from nutrideby.rag.analyze_patient import run_patient_analysis
+            result = run_patient_analysis(
+                patient_id=patient_id,
+                query=f"{body}\n\nResponda em português, máximo 3 frases.",
+                settings=settings,
+                persona="clinical",
+                use_genai=False,
+                k=3,
+                max_tokens=300,
+            )
+            return result.get("analysis", f"Oi, {nome}! 😊 Estou aqui! 💚")
+        except Exception:
+            return f"Oi, {nome}! 😊 Recebi sua mensagem. Confira o app NutriDeby! 💚"
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -632,9 +716,9 @@ def route(
     except Exception as exc:
         logger.warning("alert engine error (ignorado): %s", exc)
 
-    # Carrega memória e objetivo
-    memory         = _load_memory(conn, pid, n=5)
-    goal_statement = _get_patient_goal(conn, pid)
+    # Carrega memória, objetivo e padrão comportamental
+    memory                = _load_memory(conn, pid, n=5)
+    goal_statement        = _get_patient_goal(conn, pid)
 
     # ── 3. Áudio ──────────────────────────────────────────────────────────────
     if msg_type == "audio" and media_url:
