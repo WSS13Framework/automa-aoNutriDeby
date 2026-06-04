@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from uuid import UUID
 from typing import Annotated
 
 import psycopg
@@ -88,7 +89,7 @@ def waitlist_register(
 
 @router.get("/position/{user_id}")
 def get_position(
-    user_id: str,
+    user_id: UUID,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:

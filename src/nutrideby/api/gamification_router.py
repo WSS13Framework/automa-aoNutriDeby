@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import random
+from uuid import UUID
 from typing import Annotated
 
 import psycopg
@@ -27,7 +28,7 @@ FICTITIOUS_NAMES = [
 
 @router.get("/league/{patient_id}")
 def get_league(
-    patient_id: str,
+    patient_id: UUID,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:

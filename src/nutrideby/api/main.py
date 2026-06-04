@@ -16,7 +16,8 @@ from uuid import UUID
 import psycopg
 import psycopg.errors
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
@@ -67,6 +68,13 @@ app = FastAPI(
     description="Leitura Postgres, ingestão de documentos (texto), RAG retrieval (pgvector), análise LLM e hooks (ex.: Kiwify).",
     lifespan=lifespan,
 )
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError):
+    """Remove o campo 'input' dos erros de validação para não ecoar payload bruto."""
+    errors = [{k: v for k, v in e.items() if k != "input"} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

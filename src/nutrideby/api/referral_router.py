@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -101,7 +102,7 @@ def apply_referral_code(
 
 @router.get("/status/{patient_id}")
 def referral_status(
-    patient_id: str,
+    patient_id: UUID,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:

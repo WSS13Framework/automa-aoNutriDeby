@@ -37,7 +37,7 @@ services:
     environment:
       PYTHONPATH: /app/src
       # Sobrescreve .env se lá tiver localhost — dentro do contentor o host é o serviço ``postgres``.
-      DATABASE_URL: postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby
+      DATABASE_URL: postgresql://app_nutrideby:11464a825c5359af399793f541ba2c34012702a8105c6728@postgres:5432/nutrideby
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -69,7 +69,7 @@ services:
       ]
     environment:
       PYTHONPATH: /app/src
-      DATABASE_URL: postgresql://nutrideby:nutrideby_dev@postgres:5432/nutrideby
+      DATABASE_URL: postgresql://app_nutrideby:11464a825c5359af399793f541ba2c34012702a8105c6728@postgres:5432/nutrideby
       REDIS_URL: redis://redis:6379/0
     # Host 8081: evita colisão com outros serviços (ex.: outro contentor em 8080).
     ports:

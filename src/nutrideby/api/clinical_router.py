@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import uuid
+from uuid import UUID
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -287,7 +288,7 @@ def sign_record(
 
 @router.get("/records/{patient_id}")
 def list_records(
-    patient_id: str,
+    patient_id: UUID,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     """Lista todos os prontuários clínicos de um paciente."""
