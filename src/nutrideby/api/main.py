@@ -685,58 +685,6 @@ def retrieve_chunks(
     )
 
 
-def _kiwify_path_secret_ok(settings: Settings, secret: str) -> bool:
-    expected = settings.kiwify_webhook_path_secret
-    if not (expected and str(expected).strip()):
-        return False
-    a, b = str(secret).strip(), str(expected).strip()
-    if len(a) != len(b):
-        return False
-    return secrets.compare_digest(a, b)
-
-
-@app.post("/hooks/kiwify/{secret}")
-async def kiwify_webhook(
-    secret: str,
-    request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> dict[str, Any]:
-    """
-    Receptor Kiwify (MVP): grava JSON bruto em ``integration_webhook_inbox``.
-
-    Configura ``KIWIFY_WEBHOOK_PATH_SECRET`` e na Kiwify usa a URL
-    ``https://<teu-host>/hooks/kiwify/<mesmo_segredo>``.
-    """
-    if not (settings.kiwify_webhook_path_secret and str(settings.kiwify_webhook_path_secret).strip()):
-        raise HTTPException(
-            status_code=503,
-            detail="Webhook Kiwify desactivado: defina KIWIFY_WEBHOOK_PATH_SECRET no .env",
-        )
-    if not _kiwify_path_secret_ok(settings, secret):
-        raise HTTPException(status_code=401, detail="Segredo do path inválido")
-    try:
-        body: Any = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Corpo JSON inválido") from None
-    headers_meta: dict[str, Any] = {}
-    for key in ("user-agent", "x-forwarded-for", "content-type"):
-        if key in request.headers:
-            headers_meta[key] = request.headers[key]
-    try:
-        with psycopg.connect(settings.database_url) as conn:
-            wid = insert_webhook_inbox(
-                conn,
-                source="kiwify",
-                payload=body if isinstance(body, (dict, list)) else {"_value": body},
-                headers_meta=headers_meta,
-            )
-    except psycopg.errors.UndefinedTable as e:
-        raise HTTPException(
-            status_code=503,
-            detail="Tabela integration_webhook_inbox em falta. Aplica infra/sql/003_integration_webhook_inbox.sql",
-        ) from e
-    logger.info("kiwify webhook gravado id=%s", wid)
-    return {"received": True, "id": str(wid)}
 
 
 @app.post("/hooks/twilio/inbound")

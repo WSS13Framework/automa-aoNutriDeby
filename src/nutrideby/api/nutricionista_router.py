@@ -868,47 +868,49 @@ def grid_padroes(
 
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
+            # DISTINCT ON por nome: prioriza quem tem mais mensagens > docs > email
             cur.execute(
                 """
+                WITH canonical AS (
+                    SELECT DISTINCT ON (p.display_name)
+                        p.id, p.display_name, p.current_streak, p.last_logged_date,
+                        p.reactivation_stage, p.reactivation_confirmed_by,
+                        (SELECT COUNT(*) FROM inbound_messages WHERE patient_id = p.id) AS msg_cnt,
+                        (SELECT COUNT(*) FROM documents WHERE patient_id = p.id) AS doc_cnt
+                    FROM patients p
+                    WHERE p.display_name IS NOT NULL
+                    ORDER BY p.display_name,
+                        (SELECT COUNT(*) FROM inbound_messages WHERE patient_id = p.id) DESC,
+                        (SELECT COUNT(*) FROM documents WHERE patient_id = p.id) DESC,
+                        p.email NULLS LAST,
+                        p.created_at DESC
+                )
                 SELECT
-                    p.id,
-                    p.display_name,
-                    p.current_streak,
-                    p.last_logged_date,
-                    pa.fase,
-                    pa.ciclo_numero,
-                    pa.degradacao_nivel,
-                    pa.alimentos_gatilho,
-                    pa.data_deteccao,
-                    pa.acao_prescrita,
-                    pp.phone,
-                    p.reactivation_stage,
-                    p.reactivation_confirmed_by
-                FROM patients p
+                    c.id, c.display_name, c.current_streak, c.last_logged_date,
+                    c.reactivation_stage, c.reactivation_confirmed_by,
+                    pa.fase, pa.ciclo_numero, pa.degradacao_nivel,
+                    pa.alimentos_gatilho, pa.data_deteccao, pa.acao_prescrita,
+                    pp.phone
+                FROM canonical c
                 LEFT JOIN LATERAL (
                     SELECT fase, ciclo_numero, degradacao_nivel,
                            alimentos_gatilho, data_deteccao, acao_prescrita
                     FROM padroes_alimentares
-                    WHERE patient_id = p.id
-                    ORDER BY data_deteccao DESC
-                    LIMIT 1
+                    WHERE patient_id = c.id
+                    ORDER BY data_deteccao DESC LIMIT 1
                 ) pa ON true
                 LEFT JOIN LATERAL (
                     SELECT phone FROM patient_phones
-                    WHERE patient_id = p.id ORDER BY created_at LIMIT 1
+                    WHERE patient_id = c.id ORDER BY created_at LIMIT 1
                 ) pp ON true
-                WHERE p.display_name IS NOT NULL
                 ORDER BY
                     CASE pa.fase
-                        WHEN 'CONFRONTO' THEN 1
-                        WHEN 'RETORNO'   THEN 2
-                        WHEN 'CULPA'     THEN 3
-                        WHEN 'ESCAPE'    THEN 4
-                        ELSE 5
+                        WHEN 'CONFRONTO' THEN 1 WHEN 'RETORNO' THEN 2
+                        WHEN 'CULPA' THEN 3 WHEN 'ESCAPE' THEN 4 ELSE 5
                     END,
                     pa.data_deteccao DESC NULLS LAST,
-                    p.display_name
-                LIMIT 200
+                    c.display_name
+                LIMIT 500
                 """
             )
             rows = cur.fetchall()
@@ -979,6 +981,164 @@ def grid_padroes(
         },
         "pacientes": pacientes,
     }
+
+@router.get("/patient-detail/{patient_id}")
+def get_patient_detail(
+    patient_id: uuid.UUID,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    """Dados completos de um paciente para o drawer do painel."""
+    _auth(request, settings)
+
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            # Dados básicos — inclui duplicatas do mesmo nome
+            cur.execute(
+                """
+                SELECT p.id, p.display_name, p.email, p.subscription_status,
+                       p.goal_statement, p.current_streak, p.deby_level,
+                       p.daily_calories_target, p.daily_protein_target,
+                       p.daily_carbs_target, p.daily_fat_target,
+                       pp.phone
+                FROM patients p
+                LEFT JOIN LATERAL (
+                    SELECT phone FROM patient_phones
+                    WHERE patient_id = p.id ORDER BY created_at LIMIT 1
+                ) pp ON true
+                WHERE p.id = %s
+                """,
+                (patient_id,),
+            )
+            patient = cur.fetchone()
+            if not patient:
+                raise HTTPException(status_code=404, detail="Paciente não encontrado")
+
+            # Todas as IDs que são o "mesmo" paciente (duplicatas por nome)
+            cur.execute(
+                "SELECT id FROM patients WHERE display_name = %s",
+                (patient["display_name"],),
+            )
+            all_ids = [str(r["id"]) for r in cur.fetchall()]
+
+            # Últimas medidas (peso, composição corporal)
+            cur.execute(
+                """
+                SELECT data_avaliacao, tipo, bioimpedancia, payload
+                FROM dietbox_medidas
+                WHERE patient_id = ANY(%s::uuid[])
+                ORDER BY data_avaliacao DESC LIMIT 5
+                """,
+                (all_ids,),
+            )
+            medidas_rows = cur.fetchall()
+
+            # Última prescrição alimentar
+            cur.execute(
+                """
+                SELECT d.content_text, d.doc_type, d.collected_at
+                FROM documents d
+                WHERE d.patient_id = ANY(%s::uuid[])
+                  AND d.doc_type IN ('dietbox_plano_alimentar','dietbox_prontuario','dietbox_meta_export')
+                ORDER BY d.collected_at DESC LIMIT 3
+                """,
+                (all_ids,),
+            )
+            docs_rows = cur.fetchall()
+
+            # Conversas com a IA (últimas 8)
+            cur.execute(
+                """
+                SELECT message_type, body, reply_body, replied_at
+                FROM inbound_messages
+                WHERE patient_id = ANY(%s::uuid[])
+                  AND reply_body IS NOT NULL
+                ORDER BY replied_at DESC LIMIT 8
+                """,
+                (all_ids,),
+            )
+            msgs_rows = cur.fetchall()
+
+            # Prontuário clínico
+            cur.execute(
+                """
+                SELECT cr.id, cr.status, cr.created_at,
+                       cr.extracted_biochemistry, cr.pdf_url
+                FROM clinical_records cr
+                WHERE cr.patient_id = ANY(%s::uuid[])
+                ORDER BY cr.created_at DESC LIMIT 3
+                """,
+                (all_ids,),
+            )
+            records_rows = cur.fetchall()
+
+    # Processar medidas
+    medidas = []
+    for m in medidas_rows:
+        bio = m.get("bioimpedancia") or {}
+        if isinstance(bio, str):
+            import json as _json
+            try: bio = _json.loads(bio)
+            except Exception: bio = {}
+        medidas.append({
+            "data": m["data_avaliacao"].strftime("%d/%m/%Y") if m.get("data_avaliacao") else None,
+            "tipo": m.get("tipo"),
+            "peso": bio.get("weight") or bio.get("peso"),
+            "massa_gorda": bio.get("fatMass") or bio.get("gordura"),
+            "massa_magra": bio.get("leanMass") or bio.get("magra"),
+            "imc": bio.get("bmi") or bio.get("imc"),
+        })
+
+    # Processar docs — pega só o resumo
+    docs = [
+        {
+            "tipo": r.get("doc_type", "").replace("dietbox_", ""),
+            "data": r["collected_at"].strftime("%d/%m/%Y") if r.get("collected_at") else None,
+            "resumo": (r.get("content_text") or "")[:300],
+        }
+        for r in docs_rows
+    ]
+
+    # Processar conversas
+    conversas = [
+        {
+            "pergunta": (m.get("body") or "")[:200],
+            "resposta": (m.get("reply_body") or "")[:300],
+            "quando": m["replied_at"].isoformat() if m.get("replied_at") else None,
+        }
+        for m in msgs_rows
+    ]
+
+    return {
+        "id": str(patient["id"]),
+        "nome": patient.get("display_name"),
+        "email": patient.get("email") or "",
+        "phone": patient.get("phone") or "",
+        "subscription_status": patient.get("subscription_status"),
+        "goal": patient.get("goal_statement") or "",
+        "streak": patient.get("current_streak") or 0,
+        "level": patient.get("deby_level") or 1,
+        "metas": {
+            "calorias": patient.get("daily_calories_target"),
+            "proteina": patient.get("daily_protein_target"),
+            "carbs": patient.get("daily_carbs_target"),
+            "gordura": patient.get("daily_fat_target"),
+        },
+        "medidas": medidas,
+        "documentos": docs,
+        "conversas_ia": conversas,
+        "prontuarios": [
+            {
+                "id": r["id"],
+                "status": r.get("status"),
+                "data": r["created_at"].strftime("%d/%m/%Y") if r.get("created_at") else None,
+                "pdf_url": r.get("pdf_url"),
+            }
+            for r in records_rows
+        ],
+        "total_irmãos": len(all_ids) - 1,  # duplicatas encontradas
+    }
+
 
 @router.get("/metrics")
 def get_metrics(
@@ -1610,6 +1770,10 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
           <div class="widget-header">
             <div class="widget-icon"><i class="fa-solid fa-users"></i></div>
             <div class="widget-title">Lista completa</div>
+            <div style="margin-left:auto">
+              <input id="searchInput" type="text" placeholder="Buscar paciente..." oninput="filterTodos()"
+                style="padding:7px 12px;border:1px solid var(--border);border-radius:7px;font-size:13px;font-family:inherit;outline:none;width:220px"/>
+            </div>
           </div>
           <div class="widget-body" id="listTodos">
             <div class="empty-state">
@@ -1871,14 +2035,31 @@ function renderAtencao(){
   el.innerHTML='<div class="patient-list">'+lista.map(function(p){return patientRow(p);}).join('')+'</div>';
 }
 
+var _todosQ='';
+function filterTodos(){
+  _todosQ=($('searchInput')||{value:''}).value.toLowerCase().trim();
+  renderTodos();
+}
+
 function renderTodos(){
   var el=$('listTodos');
   if(!_grid.length){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Nenhuma paciente cadastrada</div></div>';
     return;
   }
-  var sorted=_grid.slice().sort(function(a,b){return diasSem(b)-diasSem(a);});
-  el.innerHTML='<div class="patient-list">'+sorted.map(function(p){return patientRow(p);}).join('')+'</div>';
+  var rows=_grid.slice();
+  if(_todosQ){
+    rows=rows.filter(function(p){
+      return (p.nome||'').toLowerCase().indexOf(_todosQ)>=0
+          || (p.phone||'').indexOf(_todosQ)>=0;
+    });
+  }
+  rows.sort(function(a,b){return diasSem(b)-diasSem(a);});
+  if(!rows.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-sub">Nenhum resultado para "'+esc(_todosQ)+'".</div></div>';
+    return;
+  }
+  el.innerHTML='<div class="patient-list">'+rows.map(function(p){return patientRow(p);}).join('')+'</div>';
 }
 
 function renderPatternSummary(){
@@ -1893,7 +2074,7 @@ function renderPatternSummary(){
     {fase:'CULPA',label:'Culpa emocional',dot:'dot-culpa'},
   ];
   $('patternSummary').innerHTML=phases.map(function(c){
-    return '<div class="pattern-sum" onclick="filterPadroes(\''+c.fase+'\')">'
+    return '<div class="pattern-sum" data-fase="'+c.fase+'" onclick="filterPadroes(this.dataset.fase)">'
       +'<span class="pattern-dot '+c.dot+'"></span>'
       +'<div><div class="pattern-sum-num">'+(resumo[c.fase]||0)+'</div><div class="pattern-sum-lbl">'+c.label+'</div></div>'
       +'</div>';
@@ -1952,7 +2133,7 @@ function patientRow(p,showPhase){
   return '<div class="patient-item">'
     +'<div class="patient-item-accent" style="background:'+accentColor+'"></div>'
     +'<div class="patient-avatar '+avatarClass+'">'+esc(inicial)+'</div>'
-    +'<div class="patient-info" onclick="openDrawer(\''+pid+'\')" style="cursor:pointer;flex:1;min-width:0">'
+    +'<div class="patient-info" data-pid="'+pid+'" onclick="openDrawer(this.dataset.pid)" style="cursor:pointer;flex:1;min-width:0">'
     +'<div class="patient-name">'+dname+'</div>'
     +'<div class="patient-desc">'+desc+'</div>'
     +(phaseBadge?'<div style="margin-top:5px">'+phaseBadge+'</div>':'')
@@ -2044,45 +2225,104 @@ function openWA(phone){
   window.open('https://wa.me/'+phone.replace(/\\D/g,''),'_blank');
 }
 
-function openDrawer(pid){
+async function openDrawer(pid){
   var p=_grid.find(function(x){return x.id===pid;});
   if(!p)return;
   var di=diasSem(p);
   $('dName').textContent=titleCase(p.nome);
   $('dSub').textContent=descricao(p,di);
-
-  var html='';
-  if(p.streak>0){
-    html+='<div class="drawer-section"><div class="drawer-label">Engajamento atual</div>'
-      +'<div class="drawer-value">'+p.streak+' dia'+(p.streak===1?'':'s')+' seguidos de registro</div></div>';
-  }
-  if(p.padrao){
-    var phaseLabel={ESCAPE:'Escape alimentar',CONFRONTO:'Confronto',RETORNO:'Retorno ao padrao',CULPA:'Culpa emocional'};
-    var lb=phaseLabel[p.padrao.fase]||p.padrao.fase;
-    var gat=p.padrao.gatilhos||[];
-    var da=p.padrao.dias_atras;
-    var detTxt=da===0?'hoje':(da===1?'ha 1 dia':(da!=null?'ha '+da+' dias':''));
-    html+='<div class="drawer-section"><div class="drawer-label">Padrao comportamental</div>'
-      +'<div class="drawer-value">'+esc(lb)+' — Ciclo '+(p.padrao.ciclo||1)+'</div>'
-      +(gat.length?'<div style="margin-top:8px">'+gat.map(function(g){return '<span class="trigger-tag">'+esc(g)+'</span>';}).join('')+'</div>':'')
-      +(detTxt?'<div style="font-size:12px;color:var(--muted);margin-top:6px">Detectado '+detTxt+'</div>':'')
-      +'</div>';
-    if(p.padrao.acao_recomendada){
-      html+='<div class="drawer-section"><div class="drawer-label">Recomendacao clinica</div>'
-        +'<div class="drawer-value">'+esc(p.padrao.acao_recomendada)+'</div></div>';
-    }
-  }
-  if(p.phone){
-    html+='<div class="drawer-section"><div class="drawer-label">Telefone</div><div class="drawer-value">'+esc(p.phone)+'</div></div>';
-  }
-  if(!html){html='<div class="drawer-section" style="color:var(--muted);font-size:14px">Nenhuma informacao clinica adicional disponivel.</div>';}
-  $('dBody').innerHTML=html;
-
+  $('dBody').innerHTML='<div style="text-align:center;padding:24px;color:var(--muted)"><i class="fa-solid fa-spinner fa-spin"></i> Carregando dados...</div>';
   $('dBtnChamar').style.display=p.phone?'':'none';
   $('dBtnMsg').style.display=p.phone?'':'none';
   $('dBtnChamar').onclick=function(){closeDrawerBtn();doConsult(p.id,p.nome,p.phone||'');};
   $('dBtnMsg').onclick=function(){closeDrawerBtn();openWA(p.phone||'');};
   $('drawerBg').classList.add('open');
+
+  try{
+    var d=await authGet('/api/nutri/patient-detail/'+pid);
+    var html='';
+
+    // Status IA
+    var iaOk=d.conversas_ia&&d.conversas_ia.length>0;
+    html+='<div class="drawer-section">'
+      +'<div class="drawer-label">Status IA</div>'
+      +'<div class="drawer-value" style="display:flex;align-items:center;gap:8px">'
+      +'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+(iaOk?'#1B7A4E':'#9CA3AF')+'"></span>'
+      +(iaOk?'Ativa — '+d.conversas_ia.length+' conversa(s) registradas':'Sem historico de conversas')
+      +'</div></div>';
+
+    // Padrão comportamental
+    if(p.padrao){
+      var phaseLabel={ESCAPE:'Escape alimentar',CONFRONTO:'Confronto',RETORNO:'Retorno ao padrao',CULPA:'Culpa emocional'};
+      var lb=phaseLabel[p.padrao.fase]||p.padrao.fase;
+      var gat=p.padrao.gatilhos||[];
+      html+='<div class="drawer-section"><div class="drawer-label">Padrao comportamental</div>'
+        +'<div class="drawer-value">'+esc(lb)+' — Ciclo '+(p.padrao.ciclo||1)+'</div>'
+        +(gat.length?'<div style="margin-top:6px">'+gat.map(function(g){return '<span class="trigger-tag">'+esc(g)+'</span>';}).join('')+'</div>':'')
+        +'</div>';
+    }
+
+    // Medidas (peso, composição)
+    if(d.medidas&&d.medidas.length){
+      var m=d.medidas[0];
+      html+='<div class="drawer-section"><div class="drawer-label">Ultima medicao ('+esc(m.data||'—')+')</div><div class="drawer-value">';
+      if(m.peso)html+='Peso: <strong>'+m.peso+' kg</strong> ';
+      if(m.imc)html+='IMC: <strong>'+m.imc+'</strong> ';
+      if(m.massa_gorda)html+='Gordura: <strong>'+m.massa_gorda+'%</strong>';
+      if(!m.peso&&!m.imc&&!m.massa_gorda)html+='Dados disponiveis — abra o prontuario para detalhes';
+      html+='</div></div>';
+    }
+
+    // Metas nutricionais
+    if(d.metas&&d.metas.calorias){
+      html+='<div class="drawer-section"><div class="drawer-label">Metas nutricionais</div>'
+        +'<div class="drawer-value">'
+        +Math.round(d.metas.calorias)+' kcal &nbsp;·&nbsp; '
+        +Math.round(d.metas.proteina||0)+'g prot &nbsp;·&nbsp; '
+        +Math.round(d.metas.carbs||0)+'g carbs &nbsp;·&nbsp; '
+        +Math.round(d.metas.gordura||0)+'g gord'
+        +'</div></div>';
+    }
+
+    // Objetivo
+    if(d.goal){
+      html+='<div class="drawer-section"><div class="drawer-label">Objetivo declarado</div>'
+        +'<div class="drawer-value" style="font-style:italic">'+esc(d.goal)+'</div></div>';
+    }
+
+    // Documentos clínicos
+    if(d.documentos&&d.documentos.length){
+      html+='<div class="drawer-section"><div class="drawer-label">Documentos clinicos</div>';
+      d.documentos.forEach(function(doc){
+        html+='<div style="margin-bottom:8px">'
+          +'<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase">'+esc(doc.tipo)+' — '+esc(doc.data||'')+'</div>'
+          +'<div style="font-size:12px;color:var(--text);margin-top:3px;line-height:1.5">'+esc(doc.resumo)+'</div>'
+          +'</div>';
+      });
+      html+='</div>';
+    }
+
+    // Conversas com a IA
+    if(d.conversas_ia&&d.conversas_ia.length){
+      html+='<div class="drawer-section"><div class="drawer-label">Ultimas conversas com a IA</div>';
+      d.conversas_ia.slice(0,4).forEach(function(c){
+        var ago=c.quando?timeAgo(c.quando):'';
+        if(c.pergunta){
+          html+='<div style="margin-bottom:10px;border-left:2px solid var(--border);padding-left:10px">'
+            +(ago?'<div style="font-size:11px;color:var(--muted);margin-bottom:3px">'+esc(ago)+'</div>':'')
+            +(c.pergunta?'<div style="font-size:12px;color:var(--muted)">📱 '+esc(c.pergunta)+'</div>':'')
+            +(c.resposta?'<div style="font-size:12px;color:var(--text);margin-top:3px">🤖 '+esc(c.resposta)+'</div>':'')
+            +'</div>';
+        }
+      });
+      html+='</div>';
+    }
+
+    if(!html){html='<div class="drawer-section" style="color:var(--muted)">Nenhuma informacao clinica disponivel.</div>';}
+    $('dBody').innerHTML=html;
+  }catch(e){
+    $('dBody').innerHTML='<div class="drawer-section" style="color:var(--muted)">Erro ao carregar dados: '+esc(e.message)+'</div>';
+  }
 }
 function closeDrawerBtn(){$('drawerBg').classList.remove('open');}
 function closeDrawer(e){if(e.target===$('drawerBg'))closeDrawerBtn();}

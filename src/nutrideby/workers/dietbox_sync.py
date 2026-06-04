@@ -1069,9 +1069,11 @@ def sync_meal_plans_all(settings: Settings, *, patient_limit: int | None = None,
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             q = "SELECT metadata->>'dietbox_paciente_id' AS ext_id FROM patients WHERE source_system='dietbox' AND metadata->>'dietbox_paciente_id' IS NOT NULL"
+            params: list = []
             if patient_limit:
-                q += f" LIMIT {patient_limit}"
-            cur.execute(q)
+                q += " LIMIT %s"
+                params.append(int(patient_limit))
+            cur.execute(q, params)
             rows = cur.fetchall()
 
     ids = [r["ext_id"] for r in rows if r["ext_id"]]
@@ -1193,9 +1195,11 @@ def sync_qpc_all(settings: Settings, *, patient_limit: int | None = None, sleep_
     with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             q = "SELECT metadata->>'dietbox_paciente_id' AS ext_id FROM patients WHERE source_system='dietbox' AND metadata->>'dietbox_paciente_id' IS NOT NULL"
+            params: list = []
             if patient_limit:
-                q += f" LIMIT {patient_limit}"
-            cur.execute(q)
+                q += " LIMIT %s"
+                params.append(int(patient_limit))
+            cur.execute(q, params)
             rows = cur.fetchall()
 
     ids = [r["ext_id"] for r in rows if r["ext_id"]]

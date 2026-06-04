@@ -47,7 +47,7 @@ def _find_patient(conn: psycopg.Connection, phone: str) -> dict | None:
         cur.execute(
             """
             SELECT p.id, p.display_name, p.external_id, p.created_at,
-                   p.subscription_status, p.trial_ends_at
+                   p.subscription_status, p.trial_ends_at, p.reactivation_stage
             FROM patient_phones pp
             JOIN patients p ON p.id = pp.patient_id
             WHERE pp.phone = %s
@@ -64,7 +64,7 @@ def _find_patient_by_metadata(conn: psycopg.Connection, phone: str) -> dict | No
         cur.execute(
             """
             SELECT id, display_name, external_id, created_at,
-                   subscription_status, trial_ends_at
+                   subscription_status, trial_ends_at, reactivation_stage
             FROM patients
             WHERE regexp_replace(metadata->>'MobilePhone', '[^0-9]', '', 'g') = %s
                OR regexp_replace(metadata->>'MobilePhone', '[^0-9]', '', 'g') = %s
@@ -584,6 +584,51 @@ def process_inbound(
             )
             _send_reply(phone, onboarding_reply, settings)
             return onboarding_reply
+
+        # ── Reativação: pacientes inativos ────────────────────────────────────
+        if patient.get("subscription_status") == "inactive":
+            react_stage = patient.get("reactivation_stage")
+
+            # Primeira resposta de um inativo → marca como 'responded'
+            if not react_stage:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE patients SET reactivation_stage='responded', updated_at=NOW() WHERE id=%s",
+                        (str(pid),),
+                    )
+                    conn.commit()
+                react_stage = "responded"
+                logger.info("Paciente respondeu — aguardando agendamento: patient=%s", pid)
+
+            if react_stage in ("responded", "scheduled"):
+                # Acesso limitado: apenas chat de texto; imagens/áudio bloqueados
+                if msg_type in ("image", "audio"):
+                    reply = (
+                        f"Oi, {nome}! 💚 Para enviar exames ou áudios, agende sua consulta "
+                        "com a Dra. Débora e tenha acesso completo ao NutriDeby."
+                    )
+                else:
+                    from nutrideby.agents.patient_engine import route as _engine_route
+                    reply, _ = _engine_route(
+                        patient=patient, phone=phone, body=body, msg_type="text",
+                        media_url=None, media_type=None, conn=conn, settings=settings,
+                        handle_onboarding_fn=None,
+                    )
+                    cta = (
+                        "\n\n📅 *Para acesso completo* (exames, log alimentar, prontuário), "
+                        "agende sua consulta com a Dra. Débora."
+                    )
+                    reply = reply + cta
+
+                _save_inbound(
+                    conn, patient_id=pid, phone=phone, message_type=msg_type,
+                    body=body, media_url=media_url, ocr_text=None, reply_body=reply,
+                )
+                _send_reply(phone, reply, settings)
+                return reply
+
+            # react_stage == 'reactivated' → subscription_status já foi atualizado
+            # para 'active' pelo endpoint confirm-reactivation, então cai no fluxo normal
 
         # ── Verifica paywall ──────────────────────────────────────────────────
         sub_status = _check_subscription(conn, pid)

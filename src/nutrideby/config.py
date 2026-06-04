@@ -56,8 +56,6 @@ class Settings(BaseSettings):
     # Opcional: POST JSON quando ``dietbox_sync --smoke`` detectar HTTP 401 (Slack incoming webhook, etc.)
     nutrideby_smoke_alert_webhook_url: str | None = None
 
-    # Kiwify → URL no painel: POST …/hooks/kiwify/<este_segredo> (sem partilhar em público)
-    kiwify_webhook_path_secret: str | None = None
 
     # Embeddings OpenAI-compatible (Plano B — ver docs/decisao-embeddings-vector-store.md)
     openai_api_key: str | None = None

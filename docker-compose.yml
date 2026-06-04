@@ -97,22 +97,6 @@ services:
     profiles:
       - api
 
-  worker-kiwify:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: >
-      sh -c "while true; do
-        python3 -m nutrideby.workers.process_kiwify_inbox --limit 50;
-        sleep 60;
-      done"
-    env_file: .env
-    volumes:
-      - .:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
 
 
   worker-token-watchdog:
