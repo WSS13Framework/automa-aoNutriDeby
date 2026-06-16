@@ -479,7 +479,7 @@ def _ensure_contact_log_table(conn: psycopg.Connection) -> None:
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_hermes_log_patient_day
-            ON hermes_contact_log (patient_id, profile, sent_at)
+            ON hermes_contact_log (patient_id, profile, (sent_at::date))
         """)
         conn.commit()
 

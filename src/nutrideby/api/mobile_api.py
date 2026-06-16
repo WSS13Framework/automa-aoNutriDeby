@@ -78,12 +78,20 @@ class FoodLogCreate(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _hash_password(password: str) -> str:
-    salt = b"nutrideby_salt_v1"
-    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260000).hex()
+    import os as _os
+    salt = _os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    return salt.hex() + ":" + dk.hex()
 
 
-def _verify_password(password: str, hashed: str) -> bool:
-    return hmac.compare_digest(_hash_password(password), hashed)
+def _verify_password(password: str, stored: str) -> bool:
+    if ":" in stored:
+        salt_hex, dk_hex = stored.split(":", 1)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), 260_000)
+        return hmac.compare_digest(dk.hex(), dk_hex)
+    # Legacy: salt fixo (pacientes existentes)
+    legacy = hashlib.pbkdf2_hmac("sha256", password.encode(), b"nutrideby_salt_v1", 260_000).hex()
+    return hmac.compare_digest(legacy, stored)
 
 
 def _make_jwt(patient_id: str, name: str, secret: str) -> str:
@@ -309,8 +317,8 @@ def get_patient_profile(
                 SELECT descricao, data_avaliacao, payload
                 FROM dietbox_medidas
                 WHERE patient_id = %s
-                ORDER BY data_avaliacao DESC NULLS LAST
-                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END
+                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END,
+                         data_avaliacao DESC NULLS LAST
                 LIMIT 1
                 """,
                 (patient_id,),
@@ -323,8 +331,8 @@ def get_patient_profile(
                 SELECT titulo, data_prescricao, payload
                 FROM dietbox_prescricoes
                 WHERE patient_id = %s
-                ORDER BY data_prescricao DESC NULLS LAST
-                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END
+                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END,
+                         data_prescricao DESC NULLS LAST
                 LIMIT 1
                 """,
                 (patient_id,),

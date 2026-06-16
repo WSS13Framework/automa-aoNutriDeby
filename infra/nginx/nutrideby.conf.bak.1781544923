@@ -200,36 +200,3 @@ server {
         add_header Cache-Control "public, immutable";
     }
 }
-
-# ── API HTTPS (origem :443) ──────────────────────────────────────────────────
-# Adicionado para corrigir o timeout em https://api.nutrideby.com: o Cloudflare
-# em modo "Full" conecta na origem por :443, mas só havia listen 80 para o api.
-# Espelha o bloco :80 do api (mesmo upstream http://api:8080), reusando o cert do app.
-server {
-    listen 443 ssl;
-    server_name api.nutrideby.com.br api.nutrideby.com;
-
-    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
-    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
-
-    resolver 127.0.0.11 valid=10s;
-    client_max_body_size 20M;
-
-    location /static/pdfs/ {
-        set $api_upstream http://api:8080;
-        proxy_pass       $api_upstream/static/pdfs/;
-        proxy_set_header Host $host;
-        add_header       Cache-Control "public, max-age=86400";
-    }
-
-    location / {
-        set $api_upstream http://api:8080;
-        proxy_pass         $api_upstream;
-        proxy_http_version 1.1;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Real-IP         $remote_addr;
-        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto https;
-        proxy_read_timeout 60s;
-    }
-}

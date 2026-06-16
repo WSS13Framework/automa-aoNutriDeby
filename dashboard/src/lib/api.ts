@@ -111,3 +111,145 @@ export function retrievePatient(patientId: string, query: string, k = 5) {
     revalidate: 0,
   });
 }
+
+// ── Sprint unificação: stats, PATCH, reactivation, notes, timeline ──
+
+export interface PatientStats {
+  total: number;
+  active: number;
+  trial: number;
+  inactive: number;
+  expired: number;
+  reactivation_responded: number;
+  reactivation_scheduled: number;
+  reactivation_reactivated: number;
+}
+
+export type ReactivationStage = "responded" | "scheduled" | "reactivated";
+
+export interface PatientUpdateResult {
+  id: string;
+  display_name: string | null;
+  email: string | null;
+  subscription_status: string | null;
+  reactivation_stage: string | null;
+  updated_at: string | null;
+}
+
+export interface PatientNote {
+  id: string;
+  author: string | null;
+  note: string;
+  created_at: string | null;
+}
+
+export interface TimelineEvent {
+  ts: string | null;
+  kind: string;
+  summary: string | null;
+}
+
+export function getPatientStats() {
+  return apiFetch<PatientStats>({ path: `/v1/patients/stats`, revalidate: 10 });
+}
+
+export function updatePatient(id: string, data: Record<string, unknown>) {
+  return apiFetch<PatientUpdateResult>({
+    path: `/v1/patients/${id}`,
+    method: "PATCH",
+    body: data,
+    revalidate: 0,
+  });
+}
+
+export function updateReactivationStage(
+  id: string,
+  stage: ReactivationStage,
+  notes?: string,
+) {
+  return apiFetch<{ status: string; patient_id: string; stage: string; stage_at: string | null }>({
+    path: `/v1/patients/${id}/reactivation-stage`,
+    method: "PATCH",
+    body: { stage, notes },
+    revalidate: 0,
+  });
+}
+
+export function addPatientNote(id: string, note: string, author?: string) {
+  return apiFetch<PatientNote>({
+    path: `/v1/patients/${id}/notes`,
+    method: "POST",
+    body: { note, author },
+    revalidate: 0,
+  });
+}
+
+export function getPatientNotes(id: string, limit = 50) {
+  return apiFetch<PatientNote[]>({
+    path: `/v1/patients/${id}/notes?limit=${limit}`,
+    revalidate: 0,
+  });
+}
+
+export function getPatientTimeline(id: string, limit = 100) {
+  return apiFetch<TimelineEvent[]>({
+    path: `/v1/patients/${id}/timeline?limit=${limit}`,
+    revalidate: 0,
+  });
+}
+
+// ── Evolução do Paciente ──────────────────────────────────────────────────────
+
+export interface WeeklyCalories {
+  week: string;
+  days_logged: number;
+  avg_calories: number;
+  avg_protein: number;
+}
+
+export interface BodyScanSummary {
+  id: string;
+  created_at: string;
+  body_fat_pct: number | null;
+  muscle_mass_pct: number | null;
+  lean_mass_kg: number | null;
+  analysis_notes: string | null;
+}
+
+export interface MedidaSummary {
+  descricao: string | null;
+  data: string | null;
+  peso_kg: number | null;
+  imc: number | null;
+}
+
+export interface PatientEvolution {
+  patient_id: string;
+  display_name: string | null;
+  streak: number;
+  longest_streak: number;
+  deby_level: number;
+  deby_xp: number;
+  calories_target: number | null;
+  protein_target: number | null;
+  weekly_calories: WeeklyCalories[];
+  body_scans: BodyScanSummary[];
+  medidas: MedidaSummary[];
+  total_food_logs_30d: number;
+}
+
+export function getPatientEvolution(id: string, days = 90) {
+  return apiFetch<PatientEvolution>({
+    path: `/v1/patients/${id}/evolution?days=${days}`,
+    revalidate: 0,
+  });
+}
+
+export function askPatient(id: string, question: string) {
+  return apiFetch<{ answer: string }>({
+    path: `/v1/patients/${id}/ask`,
+    method: "POST",
+    body: { question },
+    revalidate: 0,
+  });
+}

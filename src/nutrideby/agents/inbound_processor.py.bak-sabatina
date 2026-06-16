@@ -585,18 +585,6 @@ def process_inbound(
             _send_reply(phone, onboarding_reply, settings)
             return onboarding_reply
 
-        # ── SABATINA DE SINTOMAS (MSQ): em andamento ou disparada por palavra-chave ──
-        from nutrideby.sabatina.flow import handle_sabatina
-
-        sabatina_reply = handle_sabatina(conn, pid, body, phone, settings)
-        if sabatina_reply:
-            _save_inbound(
-                conn, patient_id=pid, phone=phone, message_type=msg_type,
-                body=body, media_url=media_url, ocr_text=None, reply_body=sabatina_reply,
-            )
-            _send_reply(phone, sabatina_reply, settings)
-            return sabatina_reply
-
         # ── Reativação: pacientes inativos ────────────────────────────────────
         if patient.get("subscription_status") == "inactive":
             react_stage = patient.get("reactivation_stage")

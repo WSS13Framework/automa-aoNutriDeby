@@ -1,4 +1,5 @@
 import Link from "next/link";
+import RetentionPanel from "@/components/RetentionPanel";
 import { listPatients, getRagCoverage, type Patient, type RagCoverage } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,14 @@ export default async function PacientesPage() {
           {patients.length} Acompanhados
         </span>
       </div>
+
+      {/* Painel de Retenção */}
+      <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm mb-10">
+        <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+          Pacientes em Risco de Abandono
+        </h2>
+        <RetentionPanel />
+      </section>
 
       {apiError && (
         <div className="bg-red-50 border-l-4 border-red-400 p-4 mb-8">

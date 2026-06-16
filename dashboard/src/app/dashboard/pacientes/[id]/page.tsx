@@ -1,6 +1,8 @@
 import { getPatient, getPatientDocuments, type PatientDetail, type Document } from "@/lib/api";
 import Link from "next/link";
 import RagSearch from "@/components/RagSearch";
+import EvolutionSection from "@/components/EvolutionSection";
+import PatientQA from "@/components/PatientQA";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +92,12 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
             )}
           </section>
 
+          {/* Evolução do Paciente */}
+          <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
+            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Evolução</h2>
+            <EvolutionSection patientId={params.id} />
+          </section>
+
           {/* Busca Inteligente */}
           <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Busca Inteligente (RAG)</h2>
@@ -151,6 +159,10 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
             <p className="text-xs text-gray-400 mt-4 font-light leading-relaxed">
               A IA está monitorando as metas de execução e o engajamento deste paciente via WhatsApp.
             </p>
+          </section>
+
+          <section className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+            <PatientQA patientId={params.id} />
           </section>
         </div>
       </div>
