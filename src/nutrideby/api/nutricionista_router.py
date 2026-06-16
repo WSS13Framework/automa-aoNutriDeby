@@ -1267,6 +1267,28 @@ def get_metrics(
 
 
 
+
+
+# -- Equipe (admin) -------------------------------------------------------------
+
+@router.get("/equipe")
+def list_equipe(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    payload = _auth(request, settings)
+    if payload.get("role") not in ("admin",):
+        raise HTTPException(status_code=403, detail="Acesso restrito a admins")
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, crn, email, role, is_active, password_set "
+                "FROM professional_nutricionistas ORDER BY id"
+            )
+            rows = cur.fetchall()
+    return {"equipe": [dict(r) for r in rows]}
+
+
 # -- Google OAuth ----------------------------------------------------------------
 
 _GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -1783,6 +1805,14 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
           <span>Documentos</span>
         </a>
       </li>
+      <li class="sidebar-divider" id="divEquipe" style="display:none"></li>
+      <li class="sidebar-subtitle" id="subEquipe" style="display:none">Admin</li>
+      <li class="sidebar-item" id="itemEquipe" style="display:none">
+        <a href="#" data-view="equipe" onclick="showView('equipe',event)">
+          <i class="fa-solid fa-user-nurse"></i>
+          <span>Equipe</span>
+        </a>
+      </li>
       <li class="sidebar-divider"></li>
       <li class="sidebar-item">
         <button onclick="doLogout()">
@@ -1937,6 +1967,56 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
         </div>
       </div>
 
+
+      <!-- Vista: Equipe -->
+      <div id="viewEquipe" style="display:none">
+        <div class="content-header">
+          <div class="content-title">Equipe</div>
+          <div class="content-sub">Nutricionistas com acesso ao painel</div>
+        </div>
+        <div class="widget" style="margin-bottom:20px">
+          <div class="widget-header">
+            <div class="widget-icon"><i class="fa-solid fa-user-plus"></i></div>
+            <div class="widget-title">Adicionar nutricionista</div>
+          </div>
+          <div class="widget-body" style="padding:20px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+              <div>
+                <label class="field-label">Nome completo</label>
+                <input class="field-input" id="eqNome" placeholder="Dra. Maria Silva" type="text"/>
+              </div>
+              <div>
+                <label class="field-label">CRN</label>
+                <input class="field-input" id="eqCrn" placeholder="CRN-3 12345" type="text"/>
+              </div>
+              <div>
+                <label class="field-label">E-mail Google</label>
+                <input class="field-input" id="eqEmail" placeholder="maria@gmail.com" type="email"/>
+              </div>
+              <div>
+                <label class="field-label">Perfil</label>
+                <select class="field-input" id="eqRole">
+                  <option value="nutricionista">Nutricionista</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            </div>
+            <div id="eqErr" style="color:#d32f2f;font-size:13px;margin-bottom:8px;display:none"></div>
+            <button class="btn-login" id="eqBtn" onclick="addNutri()" style="width:auto;padding:10px 28px">
+              <i class="fa-solid fa-plus"></i> Adicionar
+            </button>
+          </div>
+        </div>
+        <div class="widget">
+          <div class="widget-header">
+            <div class="widget-icon"><i class="fa-solid fa-users"></i></div>
+            <div class="widget-title">Nutricionistas cadastradas</div>
+          </div>
+          <div class="widget-body" id="eqLista">
+            <div class="empty-state"><div class="empty-icon"><i class="fa-solid fa-spinner fa-spin"></i></div></div>
+          </div>
+        </div>
+      </div>
     </div><!-- /.content -->
   </div><!-- /#wrapper -->
 </div><!-- /#vMain -->
@@ -2016,6 +2096,63 @@ function closeSidebar(){
 }
 
 /* ── Auth UI ── */
+
+/* -- Equipe -- */
+var _equipe=[];
+async function renderEquipe(){
+  var el=$('eqLista');
+  try{
+    var r=await authGet('/api/nutri/equipe');
+    _equipe=r.equipe||[];
+  }catch(e){
+    el.innerHTML='<div class="empty-state"><div class="empty-title">Erro ao carregar equipe</div></div>';
+    return;
+  }
+  if(!_equipe.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-title">Nenhuma nutricionista cadastrada</div></div>';
+    return;
+  }
+  var roleLabel={admin:'Admin',nutricionista:'Nutricionista'};
+  el.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px">'+
+    '<thead><tr style="border-bottom:2px solid var(--border)">'+
+    '<th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">Nome</th>'+
+    '<th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">E-mail</th>'+
+    '<th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">CRN</th>'+
+    '<th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">Perfil</th>'+
+    '<th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">Status</th>'+
+    '</tr></thead><tbody>'+
+    _equipe.map(function(n){
+      return '<tr style="border-bottom:1px solid var(--border)">'+
+        '<td style="padding:10px 12px;font-weight:500">'+n.name+'</td>'+
+        '<td style="padding:10px 12px;color:var(--muted)">'+n.email+'</td>'+
+        '<td style="padding:10px 12px;color:var(--muted)">'+n.crn+'</td>'+
+        '<td style="padding:10px 12px"><span style="background:var(--bg-subtle);padding:2px 8px;border-radius:4px;font-size:11px">'+(roleLabel[n.role]||n.role)+'</span></td>'+
+        '<td style="padding:10px 12px">'+(n.is_active?'<span style="color:#388e3c;font-weight:600">Ativa</span>':'<span style="color:#d32f2f">Inativa</span>')+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+
+async function addNutri(){
+  var nome=($('eqNome').value||'').trim();
+  var crn=($('eqCrn').value||'').trim();
+  var email=($('eqEmail').value||'').trim().toLowerCase();
+  var role=$('eqRole').value;
+  var errEl=$('eqErr');
+  errEl.style.display='none';
+  if(!nome||!crn||!email){errEl.textContent='Preencha nome, CRN e e-mail.';errEl.style.display='';return;}
+  $('eqBtn').disabled=true;$('eqBtn').textContent='Salvando...';
+  try{
+    await authPost('/api/nutri/setup',{name:nome,crn:crn,email:email,role:role,send_invite:false});
+    $('eqNome').value='';$('eqCrn').value='';$('eqEmail').value='';
+    showToast('Nutricionista adicionada com sucesso!');
+    renderEquipe();
+  }catch(e){
+    errEl.textContent=(e&&e.detail)||'Erro ao salvar. Verifique se o CRN ja esta cadastrado.';
+    errEl.style.display='';
+  }finally{
+    $('eqBtn').disabled=false;$('eqBtn').innerHTML='<i class="fa-solid fa-plus"></i> Adicionar';
+  }
+}
+
 function showLogin(){hide('fForgot');hide('fSetPass');show('fLogin');show('vLogin');hide('vMain');}
 function showForgot(){hide('fLogin');hide('fSetPass');show('fForgot');}
 function setPassMode(txt,mode){
@@ -2064,6 +2201,7 @@ function showMain(){
   $('sName').textContent=_me.name;
   $('tNome').textContent=firstName;
   $('sAvatar').textContent=firstName.charAt(0).toUpperCase();
+  if(_me.role==='admin'){['divEquipe','subEquipe','itemEquipe'].forEach(function(id){var el=$(id);if(el)el.style.display='';});}
   carregar();
 }
 function doLogout(){localStorage.removeItem('nt');localStorage.removeItem('nm');location.reload();}
@@ -2126,11 +2264,11 @@ function showView(view,e,extra){
   });
 
   // Page titles for topbar
-  var titles={atencao:'Inicio',todos:'Pacientes',padroes:'Padroes Comportamentais',docs:'Documentos'};
+  var titles={atencao:'Inicio',todos:'Pacientes',padroes:'Padroes Comportamentais',docs:'Documentos',equipe:'Equipe'};
   $('topbarPage').textContent=titles[view]||'';
 
   // Show/hide content panels
-  ['atencao','todos','padroes','docs'].forEach(function(v){
+  ['atencao','todos','padroes','docs','equipe'].forEach(function(v){
     var el=$('view'+cap(v));
     if(el) el.style.display=(v===view)?'':'none';
   });
@@ -2138,6 +2276,7 @@ function showView(view,e,extra){
   if(view==='todos') renderTodos();
   if(view==='padroes') renderPadroes();
   if(view==='docs') renderDocs();
+  if(view==='equipe') renderEquipe();
 
   closeSidebar();
 }
