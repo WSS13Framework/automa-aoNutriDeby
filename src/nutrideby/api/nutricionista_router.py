@@ -1272,7 +1272,7 @@ def get_metrics(
 
 
 
-# -- Indicacoes ----------------------------------------------------------------
+# -- Indicações ----------------------------------------------------------------
 
 def _desconto_indicacao(count: int) -> int:
     if count >= 3:
@@ -1847,7 +1847,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
       <li class="sidebar-item">
         <a href="#" data-view="indicacoes" onclick="showView('indicacoes',event)">
           <i class="fa-solid fa-gift"></i>
-          <span>Indicacoes</span>
+          <span>Indicações</span>
         </a>
       </li>
       <li class="sidebar-divider" id="divEquipe" style="display:none"></li>
@@ -2013,19 +2013,19 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
       </div>
 
 
-      <!-- Vista: Indicacoes -->
+      <!-- Vista: Indicações -->
       <div id="viewIndicacoes" style="display:none">
         <div class="content-header">
-          <div class="content-title">Indicacoes</div>
+          <div class="content-title">Indicações</div>
           <div class="content-sub">Indique colegas e ganhe desconto na sua mensalidade</div>
         </div>
         <div class="stats-row" style="margin-bottom:20px">
-          <div class="stat-card"><div class="stat-value" id="indTotal">0</div><div class="stat-label">Indicacoes feitas</div></div>
+          <div class="stat-card"><div class="stat-value" id="indTotal">0</div><div class="stat-label">Indicações feitas</div></div>
           <div class="stat-card"><div class="stat-value" style="color:var(--brand)" id="indDesconto">0%</div><div class="stat-label">Desconto atual</div></div>
-          <div class="stat-card"><div class="stat-value" id="indFaltam">—</div><div class="stat-label">Para proxima faixa</div></div>
+          <div class="stat-card"><div class="stat-value" id="indFaltam">—</div><div class="stat-label">Para próxima faixa</div></div>
         </div>
         <div class="widget" style="margin-bottom:20px">
-          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-link"></i></div><div class="widget-title">Seu codigo de indicacao</div></div>
+          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-link"></i></div><div class="widget-title">Seu código de indicação</div></div>
           <div class="widget-body" style="padding:20px">
             <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Compartilhe seu ID com outras nutricionistas. Quando a admin cadastra uma indicada, informa seu ID.</p>
             <div style="display:flex;align-items:center;gap:10px">
@@ -2034,13 +2034,13 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
             </div>
             <div style="margin-top:16px;padding:14px;background:var(--bg-subtle);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.8">
               <strong style="color:var(--text)">Tabela de descontos:</strong><br>
-              1 a 2 indicacoes: <strong>5% de desconto</strong><br>
-              3 a 5 indicacoes: <strong>10% de desconto</strong>
+              1 a 2 indicações: <strong>5% de desconto</strong><br>
+              3 a 5 indicações: <strong>10% de desconto</strong>
             </div>
           </div>
         </div>
         <div class="widget">
-          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-user-group"></i></div><div class="widget-title">Nutricionistas que voce indicou</div></div>
+          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-user-group"></i></div><div class="widget-title">Nutricionistas que você indicou</div></div>
           <div class="widget-body" id="indLista"><div class="empty-state"><div class="empty-icon"><i class="fa-solid fa-spinner fa-spin"></i></div></div></div>
         </div>
       </div>
@@ -2079,7 +2079,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
               </div>
             </div>
             <div style="margin-bottom:12px">
-              <label class="field-label">Indicada por (ID) - opcional</label>
+              <label class="field-label">Indicada por (ID) — opcional</label>
               <input class="field-input" id="eqRefId" placeholder="ex: 1" type="number" min="1" style="width:160px"/>
             </div>
             <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
@@ -2183,17 +2183,17 @@ function closeSidebar(){
 /* ── Auth UI ── */
 
 
-/* -- Indicacoes -- */
+/* -- Indicações -- */
 async function renderIndicacoes(){
   try{
     var r=await authGet('/api/nutri/indicacao');
     $('indCodigo').textContent=r.meu_id;
     $('indTotal').textContent=r.total_indicacoes;
     $('indDesconto').textContent=r.desconto_percent+'%';
-    $('indFaltam').textContent=r.proxima_faixa?r.faltam_para_proxima+' para '+r.proxima_faixa+'%':'Maximo atingido';
+    $('indFaltam').textContent=r.proxima_faixa?r.faltam_para_proxima+' para '+r.proxima_faixa+'%':'Máximo atingido';
     var el=$('indLista');
     if(!r.indicadas||!r.indicadas.length){
-      el.innerHTML='<div class="empty-state"><div class="empty-title">Nenhuma indicacao ainda</div><div class="empty-sub">Compartilhe seu codigo com colegas!</div></div>';
+      el.innerHTML='<div class="empty-state"><div class="empty-title">Nenhuma indicação ainda</div><div class="empty-sub">Compartilhe seu código com colegas!</div></div>';
     }else{
       el.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="border-bottom:2px solid var(--border)"><th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">Nome</th><th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">E-mail</th></tr></thead><tbody>'+
         r.indicadas.map(function(n){return '<tr style="border-bottom:1px solid var(--border)"><td style="padding:10px 12px;font-weight:500">'+n.name+'</td><td style="padding:10px 12px;color:var(--muted)">'+n.email+'</td></tr>';}).join('')+'</tbody></table>';
@@ -2203,7 +2203,7 @@ async function renderIndicacoes(){
 function copiarCodigo(){
   var cod=($('indCodigo').textContent||'').trim();
   if(!cod||cod==='—') return;
-  navigator.clipboard.writeText(cod).then(function(){showToast('Codigo copiado!');}).catch(function(){});
+  navigator.clipboard.writeText(cod).then(function(){showToast('Código copiado!');}).catch(function(){});
 }
 
 /* -- Equipe -- */
@@ -2375,7 +2375,7 @@ function showView(view,e,extra){
   });
 
   // Page titles for topbar
-  var titles={atencao:'Inicio',todos:'Pacientes',padroes:'Padroes Comportamentais',docs:'Documentos',indicacoes:'Indicacoes',equipe:'Equipe'};
+  var titles={atencao:'Inicio',todos:'Pacientes',padroes:'Padroes Comportamentais',docs:'Documentos',indicacoes:'Indicações',equipe:'Equipe'};
   $('topbarPage').textContent=titles[view]||'';
 
   // Show/hide content panels
