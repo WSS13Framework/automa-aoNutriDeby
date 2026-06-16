@@ -2001,6 +2001,10 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
                 </select>
               </div>
             </div>
+            <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="eqInvite" checked style="width:16px;height:16px;cursor:pointer;accent-color:var(--brand)"/>
+              <label for="eqInvite" style="font-size:13px;color:var(--text);cursor:pointer">Enviar convite por e-mail para ela criar sua senha</label>
+            </div>
             <div id="eqErr" style="color:#d32f2f;font-size:13px;margin-bottom:8px;display:none"></div>
             <button class="btn-login" id="eqBtn" onclick="addNutri()" style="width:auto;padding:10px 28px">
               <i class="fa-solid fa-plus"></i> Adicionar
@@ -2141,9 +2145,10 @@ async function addNutri(){
   if(!nome||!crn||!email){errEl.textContent='Preencha nome, CRN e e-mail.';errEl.style.display='';return;}
   $('eqBtn').disabled=true;$('eqBtn').textContent='Salvando...';
   try{
-    await authPost('/api/nutri/setup',{name:nome,crn:crn,email:email,role:role,send_invite:false});
+    var invite=!!($('eqInvite')&&$('eqInvite').checked);
+    await authPost('/api/nutri/setup',{name:nome,crn:crn,email:email,role:role,send_invite:invite});
     $('eqNome').value='';$('eqCrn').value='';$('eqEmail').value='';
-    showToast('Nutricionista adicionada com sucesso!');
+    showToast(invite?'Nutricionista adicionada — convite enviado por e-mail!':'Nutricionista adicionada com sucesso!');
     renderEquipe();
   }catch(e){
     errEl.textContent=(e&&e.detail)||'Erro ao salvar. Verifique se o CRN ja esta cadastrado.';
