@@ -1272,6 +1272,81 @@ def get_metrics(
 
 
 
+# -- Minha Marca (white-label) ------------------------------------------------
+
+class MarcaRequest(BaseModel):
+    nome_agente: str | None = None
+    cor_primaria: str | None = None
+    cor_secundaria: str | None = None
+    logo_url: str | None = None
+    mensagem_boas_vindas: str | None = None
+    numero_whatsapp: str | None = None
+    tenant_slug: str | None = None
+
+
+@router.get("/minha-marca")
+def get_minha_marca(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    payload = _auth(request, settings)
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, name, tenant_slug, nome_agente, cor_primaria,
+                          cor_secundaria, logo_url, mensagem_boas_vindas, numero_whatsapp
+                   FROM professional_nutricionistas WHERE id = %s""",
+                (payload["sub"],),
+            )
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    return dict(row)
+
+
+@router.put("/minha-marca")
+def update_minha_marca(
+    body: MarcaRequest,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    payload = _auth(request, settings)
+    nutri_id = payload["sub"]
+
+    fields, values = [], []
+    if body.nome_agente is not None:
+        fields.append("nome_agente = %s"); values.append(body.nome_agente)
+    if body.cor_primaria is not None:
+        fields.append("cor_primaria = %s"); values.append(body.cor_primaria)
+    if body.cor_secundaria is not None:
+        fields.append("cor_secundaria = %s"); values.append(body.cor_secundaria)
+    if body.logo_url is not None:
+        fields.append("logo_url = %s"); values.append(body.logo_url or None)
+    if body.mensagem_boas_vindas is not None:
+        fields.append("mensagem_boas_vindas = %s"); values.append(body.mensagem_boas_vindas)
+    if body.numero_whatsapp is not None:
+        fields.append("numero_whatsapp = %s"); values.append(body.numero_whatsapp or None)
+    if body.tenant_slug is not None:
+        slug = body.tenant_slug.lower().strip().replace(" ", "-")
+        fields.append("tenant_slug = %s"); values.append(slug)
+
+    if not fields:
+        raise HTTPException(status_code=422, detail="Nenhum campo para atualizar")
+
+    values.append(nutri_id)
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    f"UPDATE professional_nutricionistas SET {', '.join(fields)} WHERE id = %s",
+                    values,
+                )
+                conn.commit()
+            except Exception as e:
+                raise HTTPException(status_code=409, detail="Slug já em uso por outra nutricionista")
+    return {"ok": True}
+
+
 # -- Indicações ----------------------------------------------------------------
 
 def _desconto_indicacao(count: int) -> int:
@@ -1845,6 +1920,12 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
         </a>
       </li>
       <li class="sidebar-item">
+        <a href="#" data-view="marca" onclick="showView('marca',event)">
+          <i class="fa-solid fa-palette"></i>
+          <span>Minha Marca</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
         <a href="#" data-view="indicacoes" onclick="showView('indicacoes',event)">
           <i class="fa-solid fa-gift"></i>
           <span>Indicações</span>
@@ -2012,6 +2093,67 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
         </div>
       </div>
 
+
+      <!-- Vista: Minha Marca -->
+      <div id="viewMarca" style="display:none">
+        <div class="content-header">
+          <div class="content-title">Minha Marca</div>
+          <div class="content-sub">Personalize como seus pacientes veem o app</div>
+        </div>
+        <div class="widget">
+          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-palette"></i></div><div class="widget-title">Configurações da marca</div></div>
+          <div class="widget-body" style="padding:24px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+              <div>
+                <label class="field-label">Nome do agente IA</label>
+                <input class="field-input" id="mbNomeAgente" placeholder="Assistente da Dra. Maria" type="text"/>
+              </div>
+              <div>
+                <label class="field-label">Slug do tenant (URL única)</label>
+                <input class="field-input" id="mbSlug" placeholder="dra-maria" type="text"/>
+                <div style="font-size:11px;color:var(--muted);margin-top:4px">Usado em: /tenant/<strong id="mbSlugPreview">...</strong>/config</div>
+              </div>
+              <div>
+                <label class="field-label">Cor primária</label>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <input type="color" id="mbCorP" style="width:44px;height:36px;border:1.5px solid var(--border);border-radius:7px;cursor:pointer;padding:2px"/>
+                  <input class="field-input" id="mbCorPHex" placeholder="#2ECC71" type="text" style="flex:1" oninput="syncColor('mbCorP',this.value)"/>
+                </div>
+              </div>
+              <div>
+                <label class="field-label">Cor secundária</label>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <input type="color" id="mbCorS" style="width:44px;height:36px;border:1.5px solid var(--border);border-radius:7px;cursor:pointer;padding:2px"/>
+                  <input class="field-input" id="mbCorSHex" placeholder="#1A5C3A" type="text" style="flex:1" oninput="syncColor('mbCorS',this.value)"/>
+                </div>
+              </div>
+              <div>
+                <label class="field-label">URL do logo</label>
+                <input class="field-input" id="mbLogo" placeholder="https://..." type="url"/>
+              </div>
+              <div>
+                <label class="field-label">WhatsApp da clínica</label>
+                <input class="field-input" id="mbWhats" placeholder="+5521999999999" type="tel"/>
+              </div>
+            </div>
+            <div style="margin-bottom:16px">
+              <label class="field-label">Mensagem de boas-vindas</label>
+              <textarea class="field-input" id="mbBoasVindas" rows="3" placeholder="Olá! Sou a assistente da Dra. Maria..." style="resize:vertical"></textarea>
+            </div>
+            <div id="mbErr" style="color:#d32f2f;font-size:13px;margin-bottom:8px;display:none"></div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="btn-login" id="mbBtn" onclick="salvarMarca()" style="width:auto;padding:10px 28px"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
+              <div id="mbOk" style="color:#388e3c;font-size:13px;display:none"><i class="fa-solid fa-check"></i> Salvo com sucesso!</div>
+            </div>
+          </div>
+        </div>
+        <div class="widget" style="margin-top:20px">
+          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-eye"></i></div><div class="widget-title">Preview do link do paciente</div></div>
+          <div class="widget-body" style="padding:20px;font-size:13px;color:var(--muted)">
+            Endpoint mobile: <code style="background:var(--bg-subtle);padding:2px 6px;border-radius:4px">GET /tenant/<span id="mbSlugLink">dra-debora</span>/config</code>
+          </div>
+        </div>
+      </div>
 
       <!-- Vista: Indicações -->
       <div id="viewIndicacoes" style="display:none">
@@ -2182,6 +2324,53 @@ function closeSidebar(){
 
 /* ── Auth UI ── */
 
+
+
+/* -- Minha Marca -- */
+async function carregarMarca(){
+  try{
+    var r=await authGet('/api/nutri/minha-marca');
+    $('mbNomeAgente').value=r.nome_agente||'';
+    $('mbSlug').value=r.tenant_slug||'';
+    $('mbCorP').value=r.cor_primaria||'#2ECC71';
+    $('mbCorPHex').value=r.cor_primaria||'#2ECC71';
+    $('mbCorS').value=r.cor_secundaria||'#1A5C3A';
+    $('mbCorSHex').value=r.cor_secundaria||'#1A5C3A';
+    $('mbLogo').value=r.logo_url||'';
+    $('mbWhats').value=r.numero_whatsapp||'';
+    $('mbBoasVindas').value=r.mensagem_boas_vindas||'';
+    $('mbSlugPreview').textContent=r.tenant_slug||'...';
+    $('mbSlugLink').textContent=r.tenant_slug||'...';
+  }catch(e){console.error('marca',e);}
+}
+function syncColor(inputId, hex){
+  if(/^#[0-9A-Fa-f]{6}$/.test(hex)){var el=$(inputId);if(el)el.value=hex;}
+}
+async function salvarMarca(){
+  $('mbErr').style.display='none';$('mbOk').style.display='none';
+  $('mbBtn').disabled=true;$('mbBtn').textContent='Salvando...';
+  var body={
+    nome_agente:$('mbNomeAgente').value.trim()||null,
+    tenant_slug:$('mbSlug').value.trim()||null,
+    cor_primaria:$('mbCorPHex').value.trim()||null,
+    cor_secundaria:$('mbCorSHex').value.trim()||null,
+    logo_url:$('mbLogo').value.trim()||null,
+    numero_whatsapp:$('mbWhats').value.trim()||null,
+    mensagem_boas_vindas:$('mbBoasVindas').value.trim()||null,
+  };
+  try{
+    await authPut('/api/nutri/minha-marca',body);
+    $('mbOk').style.display='';
+    $('mbSlugPreview').textContent=body.tenant_slug||'...';
+    $('mbSlugLink').textContent=body.tenant_slug||'...';
+    showToast('Marca salva com sucesso!');
+  }catch(e){
+    $('mbErr').textContent=(e&&e.detail)||'Erro ao salvar.';
+    $('mbErr').style.display='';
+  }finally{
+    $('mbBtn').disabled=false;$('mbBtn').innerHTML='<i class="fa-solid fa-floppy-disk"></i> Salvar';
+  }
+}
 
 /* -- Indicações -- */
 async function renderIndicacoes(){
@@ -2375,11 +2564,11 @@ function showView(view,e,extra){
   });
 
   // Page titles for topbar
-  var titles={atencao:'Inicio',todos:'Pacientes',padroes:'Padroes Comportamentais',docs:'Documentos',indicacoes:'Indicações',equipe:'Equipe'};
+  var titles={atencao:'Inicio',todos:'Pacientes',padroes:'Padroes Comportamentais',docs:'Documentos',marca:'Minha Marca',indicacoes:'Indicações',equipe:'Equipe'};
   $('topbarPage').textContent=titles[view]||'';
 
   // Show/hide content panels
-  ['atencao','todos','padroes','docs','indicacoes','equipe'].forEach(function(v){
+  ['atencao','todos','padroes','docs','marca','indicacoes','equipe'].forEach(function(v){
     var el=$('view'+cap(v));
     if(el) el.style.display=(v===view)?'':'none';
   });
@@ -2389,6 +2578,7 @@ function showView(view,e,extra){
   if(view==='docs') renderDocs();
   if(view==='equipe') renderEquipe();
   if(view==='indicacoes') renderIndicacoes();
+  if(view==='marca') carregarMarca();
 
   closeSidebar();
 }
@@ -2746,6 +2936,12 @@ async function authGet(url){
 }
 async function authPost(url,body){
   var r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+_tok},body:JSON.stringify(body)});
+  var d=await r.json();
+  if(!r.ok){var e=new Error(d.detail||'Erro');e.status=r.status;throw e;}
+  return d;
+}
+async function authPut(url,body){
+  var r=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':'Bearer '+_tok},body:JSON.stringify(body)});
   var d=await r.json();
   if(!r.ok){var e=new Error(d.detail||'Erro');e.status=r.status;throw e;}
   return d;

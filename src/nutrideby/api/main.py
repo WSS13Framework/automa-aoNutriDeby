@@ -1108,28 +1108,40 @@ async def listar_conversas(settings: Annotated[Settings, Depends(get_settings)])
 
 
 
-# ── Tenant white-label config ─────────────────────────────────────────────────
-
-_TENANT_CONFIGS: dict[str, dict] = {
-    "dra-debora": {
-        "tenant_id": "dra-debora",
-        "nutricionista_nome": "Dra. Débora Oliveira",
-        "nome_agente": "Assistente da Dra. Débora",
-        "cor_primaria": "#2ECC71",
-        "cor_secundaria": "#1A5C3A",
-        "logo_url": None,
-        "mensagem_boas_vindas": "Prazer! Sou a assistente da Dra. Débora.",
-        "numero_whatsapp": None,
-    },
-}
-
+# ── Tenant white-label config (dinâmico — banco de dados) ────────────────────
 
 @app.get("/tenant/{tenant_id}/config")
-def get_tenant_config(tenant_id: str) -> dict:
-    cfg = _TENANT_CONFIGS.get(tenant_id)
-    if not cfg:
+def get_tenant_config(
+    tenant_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    import psycopg
+    from psycopg.rows import dict_row
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, tenant_slug, nome_agente,
+                       cor_primaria, cor_secundaria, logo_url,
+                       mensagem_boas_vindas, numero_whatsapp
+                FROM professional_nutricionistas
+                WHERE tenant_slug = %s AND is_active = true
+                """,
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' não encontrado")
-    return cfg
+    return {
+        "tenant_id":            row["tenant_slug"],
+        "nutricionista_nome":   row["name"],
+        "nome_agente":          row["nome_agente"] or f"Assistente da {row['name']}",
+        "cor_primaria":         row["cor_primaria"] or "#2ECC71",
+        "cor_secundaria":       row["cor_secundaria"] or "#1A5C3A",
+        "logo_url":             row["logo_url"],
+        "mensagem_boas_vindas": row["mensagem_boas_vindas"] or f"Olá! Sou a assistente da {row['name']}.",
+        "numero_whatsapp":      row["numero_whatsapp"],
+    }
 
 
 # ── /v1/chat models ───────────────────────────────────────────────────────────
