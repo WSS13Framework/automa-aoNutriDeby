@@ -2019,10 +2019,10 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
           <div class="content-title">Indicações</div>
           <div class="content-sub">Indique colegas e ganhe desconto na sua mensalidade</div>
         </div>
-        <div class="stats-row" style="margin-bottom:20px">
-          <div class="stat-card"><div class="stat-value" id="indTotal">0</div><div class="stat-label">Indicações feitas</div></div>
-          <div class="stat-card"><div class="stat-value" style="color:var(--brand)" id="indDesconto">0%</div><div class="stat-label">Desconto atual</div></div>
-          <div class="stat-card"><div class="stat-value" id="indFaltam">—</div><div class="stat-label">Para próxima faixa</div></div>
+        <div class="stats-row" style="margin-bottom:20px;grid-template-columns:repeat(3,1fr)">
+          <div class="stat-card"><div class="stat-value" style="font-size:20px" id="indTotal">0</div><div class="stat-label">Indicações feitas</div></div>
+          <div class="stat-card"><div class="stat-value" style="font-size:20px;color:var(--brand)" id="indDesconto">0%</div><div class="stat-label">Desconto atual</div></div>
+          <div class="stat-card"><div class="stat-value" style="font-size:16px;letter-spacing:0" id="indFaltam">—</div><div class="stat-label">Para próxima faixa</div></div>
         </div>
         <div class="widget" style="margin-bottom:20px">
           <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-link"></i></div><div class="widget-title">Seu código de indicação</div></div>
