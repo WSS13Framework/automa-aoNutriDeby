@@ -1534,30 +1534,65 @@ _PANEL_HTML = """<!DOCTYPE html>
 <title>NutriDeby — Painel Clínico</title>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
+  /* ── Sistema de tema dinamico (estilo Ant/Arco): a cor da marca
+     gera toda a escala brand-1..10 via JS. Aqui ficam os fallbacks. ── */
   --brand:#1B7A4E;
+  --brand-1:#E8F5EE;
+  --brand-2:#C6E6D5;
+  --brand-3:#9DD2B6;
+  --brand-4:#6FBC95;
+  --brand-5:#3E9C70;
+  --brand-6:#1B7A4E;   /* cor principal */
+  --brand-7:#176A43;   /* hover */
+  --brand-8:#125737;   /* active */
+  --brand-9:#0D432A;
+  --brand-10:#08301E;
+  --brand-on:#FFFFFF;  /* texto sobre a cor da marca (contraste WCAG) */
+  --brand-soft:var(--brand-1); /* fundo suave para chips/badges */
   --sidebar-bg:#1A3527;
+  --sidebar-grad:linear-gradient(180deg,#1A3527,#12281D);
   --sidebar-width:220px;
   --topbar-h:56px;
   --font-heading:'Montserrat',system-ui,sans-serif;
   --font-body:'Inter',system-ui,sans-serif;
   --bg:#F0F2F0;
   --card:#FFFFFF;
+  --card-2:#F7FAF8;
   --border:#E2E8E4;
   --text:#1A1A1A;
   --muted:#637068;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
   --red:#C0392B;
   --amber:#D4850A;
-  --safe:#1B7A4E;
+  --safe:var(--brand-6);
+  --radius:10px;
+  --trans:.25s ease;
 }
+/* ── Tema escuro (algoritmo dark: inverte neutros, mantem a marca) ── */
+[data-theme="dark"]{
+  --bg:#10161A;
+  --card:#1A2228;
+  --card-2:#222C33;
+  --border:#2C383F;
+  --text:#E6EDEA;
+  --muted:#93A3A9;
+  --sidebar-bg:#0C1418;
+  --sidebar-grad:linear-gradient(180deg,#0C1418,#060B0E);
+  --shadow:0 1px 3px rgba(0,0,0,.5);
+  --brand-soft:rgba(255,255,255,.06);
+}
+html{transition:none}
+body,.card,.sidebar,.topbar,.stat-card{transition:background-color var(--trans),color var(--trans),border-color var(--trans)}
 body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
 
 /* ── Login ── */
 .login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--sidebar-bg)}
 .login-card{background:#fff;border-radius:10px;padding:40px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.25)}
-.login-logo{font-family:var(--font-heading);font-size:22px;font-weight:700;color:var(--brand);margin-bottom:6px}
+.login-logo{font-family:var(--font-heading);font-size:22px;font-weight:700;color:var(--brand-6);margin-bottom:6px}
 .login-sub{font-size:13px;color:var(--muted);margin-bottom:28px}
 .btn-google{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px 16px;border:1.5px solid var(--border);border-radius:8px;background:#fff;color:#3c4043;font-family:var(--font-body);font-size:14px;font-weight:500;cursor:pointer;transition:box-shadow .15s,border-color .15s;margin-bottom:14px}
 .btn-google:hover{box-shadow:0 2px 8px rgba(0,0,0,.12);border-color:#bbb}
@@ -1566,19 +1601,19 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 .login-divider:before,.login-divider:after{content:'';flex:1;height:1px;background:var(--border)}
 .field-label{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
 .field-input{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px;font-family:var(--font-body);outline:none;color:var(--text);transition:border-color .15s}
-.field-input:focus{border-color:var(--brand)}
+.field-input:focus{border-color:var(--brand-6)}
 .field-group{margin-bottom:16px}
-.btn-login{width:100%;padding:11px;background:var(--brand);color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:600;font-family:var(--font-heading);cursor:pointer;transition:background .15s;margin-top:4px}
-.btn-login:hover{background:#155e3c}
+.btn-login{width:100%;padding:11px;background:var(--brand-6);color:var(--brand-on);border:none;border-radius:7px;font-size:14px;font-weight:600;font-family:var(--font-heading);cursor:pointer;transition:background .15s;margin-top:4px}
+.btn-login:hover{background:var(--brand-7)}
 .btn-login:disabled{background:#9CA3AF;cursor:not-allowed}
-.btn-link-sm{background:none;border:none;color:var(--brand);font-size:13px;cursor:pointer;font-family:var(--font-body);text-decoration:underline;display:block;text-align:center;margin-top:14px}
+.btn-link-sm{background:none;border:none;color:var(--brand-6);font-size:13px;cursor:pointer;font-family:var(--font-body);text-decoration:underline;display:block;text-align:center;margin-top:14px}
 .err-text{font-size:12px;color:var(--red);margin-top:8px}
 .ok-text{font-size:12px;color:var(--safe);margin-top:8px}
 
 /* ── Sidebar ── */
 #sidebar{
   position:fixed;top:0;left:0;width:var(--sidebar-width);height:100vh;
-  background:var(--sidebar-bg);
+  background:var(--sidebar-grad);
   display:flex;flex-direction:column;
   z-index:200;overflow-y:auto;
   transition:transform .25s;
@@ -1634,7 +1669,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 
 /* ── Topbar ── */
 .topbar{
-  height:var(--topbar-h);background:#fff;
+  height:var(--topbar-h);background:var(--card);
   border-bottom:1px solid var(--border);
   position:sticky;top:0;z-index:100;
   display:flex;align-items:center;
@@ -1645,7 +1680,15 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
   display:none;flex-direction:column;gap:4px;padding:4px;
 }
 .topbar-hamburger span{display:block;width:20px;height:2px;background:var(--text);border-radius:2px}
-.topbar-logo{font-family:var(--font-heading);font-size:16px;font-weight:700;color:var(--brand);letter-spacing:-.2px}
+.topbar-logo{font-family:var(--font-heading);font-size:16px;font-weight:700;color:var(--brand-6);letter-spacing:-.2px}
+/* Botao de tema (claro/escuro) */
+.theme-toggle{background:none;border:1px solid var(--border);border-radius:999px;width:34px;height:34px;cursor:pointer;color:var(--muted);font-size:14px;display:flex;align-items:center;justify-content:center;transition:all var(--trans)}
+.theme-toggle:hover{color:var(--brand-6);border-color:var(--brand-6)}
+/* Presets de cor da marca (estilo paleta Arco) */
+.preset-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.preset-sw{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent;box-shadow:0 0 0 1px var(--border);transition:transform .12s}
+.preset-sw:hover{transform:scale(1.12)}
+.preset-sw.active{border-color:var(--card);box-shadow:0 0 0 2px var(--brand-6)}
 .topbar-sep{width:1px;height:18px;background:var(--border)}
 .topbar-page{font-size:13px;color:var(--muted)}
 .topbar-right{margin-left:auto;display:flex;align-items:center;gap:16px}
@@ -1653,7 +1696,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 .topbar-nutri strong{color:var(--text);font-weight:600}
 .topbar-notif{position:relative}
 .topbar-notif-btn{background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:4px;position:relative}
-.notif-dot{position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:var(--red);border:1.5px solid #fff}
+.notif-dot{position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:var(--red);border:1.5px solid var(--card)}
 
 /* ── Content ── */
 .content{flex:1;padding:24px}
@@ -1666,7 +1709,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 .widget-header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
 .widget-icon{
   width:32px;height:32px;border-radius:8px;
-  background:rgba(27,122,78,.1);color:var(--brand);
+  background:var(--brand-soft);color:var(--brand-6);
   display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;
 }
 .widget-icon.red{background:rgba(192,57,43,.1);color:var(--red)}
@@ -1679,7 +1722,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
 .stat-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
 .stat-card.clickable{cursor:pointer;transition:border-color .15s}
-.stat-card.clickable:hover{border-color:var(--brand)}
+.stat-card.clickable:hover{border-color:var(--brand-6)}
 .stat-value{font-family:var(--font-heading);font-size:28px;font-weight:700;color:var(--text);line-height:1;letter-spacing:-.5px}
 .stat-value.amber{color:var(--amber)}
 .stat-value.red{color:var(--red)}
@@ -1693,11 +1736,11 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
   transition:background .12s;
 }
 .patient-item:last-child{border-bottom:none}
-.patient-item:hover{background:#F8FAF8}
+.patient-item:hover{background:var(--card-2)}
 .patient-item-accent{width:3px;height:40px;border-radius:2px;flex-shrink:0}
 .patient-avatar{
   width:38px;height:38px;border-radius:50%;
-  background:rgba(27,122,78,.12);color:var(--brand);
+  background:var(--brand-soft);color:var(--brand-6);
   font-size:14px;font-weight:700;font-family:var(--font-heading);
   display:flex;align-items:center;justify-content:center;flex-shrink:0;
 }
@@ -1713,10 +1756,10 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
   font-size:12px;font-weight:600;font-family:var(--font-body);
   cursor:pointer;white-space:nowrap;transition:all .12s;
 }
-.btn-action-primary{background:var(--brand);color:#fff}
-.btn-action-primary:hover{background:#155e3c}
-.btn-action-secondary{background:#fff;color:var(--text);border:1px solid var(--border)}
-.btn-action-secondary:hover{border-color:var(--brand);color:var(--brand)}
+.btn-action-primary{background:var(--brand-6);color:var(--brand-on)}
+.btn-action-primary:hover{background:var(--brand-7)}
+.btn-action-secondary{background:var(--card);color:var(--text);border:1px solid var(--border)}
+.btn-action-secondary:hover{border-color:var(--brand-6);color:var(--brand-6)}
 .btn-action-ghost{background:none;color:var(--muted);border:none;padding:6px 10px}
 .btn-action-ghost:hover{color:var(--text)}
 
@@ -1766,12 +1809,12 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 }
 .doc-table td{padding:12px 16px;font-size:13px;border-bottom:1px solid #F5F7F5;vertical-align:middle}
 .doc-table tr:last-child td{border-bottom:none}
-.doc-table tr:hover td{background:#F8FAF8}
+.doc-table tr:hover td{background:var(--card-2)}
 .status-badge{display:inline-block;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:600}
 .status-pend{background:#FEF9EC;color:#92600A}
 .status-ok{background:#ECFDF5;color:var(--safe)}
 .status-wait{background:#EEF2FF;color:#4338CA}
-.btn-sign{padding:5px 12px;background:var(--brand);color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font-body)}
+.btn-sign{padding:5px 12px;background:var(--brand-6);color:var(--brand-on);border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font-body)}
 .btn-sign:disabled{background:#D1D5DB;cursor:not-allowed}
 
 /* ── Empty state ── */
@@ -1809,11 +1852,11 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 
 /* ── Toast ── */
 #toast{position:fixed;bottom:24px;right:24px;background:#1A1A1A;color:#fff;padding:11px 18px;border-radius:8px;font-size:13px;display:none;z-index:999;max-width:320px;line-height:1.4;box-shadow:0 4px 20px rgba(0,0,0,.2)}
-#toast.ok{background:#1B7A4E}
+#toast.ok{background:var(--brand-6)}
 #toast.err{background:var(--red)}
 
 /* ── Progress bar (loading) ── */
-.progress-loading{height:3px;background:rgba(27,122,78,.15);overflow:hidden;border-radius:2px}
+.progress-loading{height:3px;background:var(--brand-soft);overflow:hidden;border-radius:2px}
 .indeterminate{height:100%;background:var(--brand);animation:indeterminate 1.4s infinite}
 @keyframes indeterminate{0%{transform:translateX(-100%);width:50%}100%{transform:translateX(200%);width:50%}}
 
@@ -1830,7 +1873,38 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
   .stats-row{grid-template-columns:repeat(2,1fr)}
   .pattern-summary-grid{grid-template-columns:repeat(2,1fr)}
   .patient-actions{flex-direction:column}
+  .insight-grid{flex-direction:column}
 }
+/* === Melhorias de engajamento === */
+.insight-grid{display:flex;gap:16px;align-items:flex-start}
+.chart-widget .widget-body{padding-top:6px}
+.foco-dia{background:var(--brand-soft);border:1px solid var(--border);border-radius:12px;padding:14px 14px 6px;margin-bottom:6px}
+.foco-head{display:flex;align-items:center;gap:8px;font-family:'Montserrat',sans-serif;font-weight:700;font-size:14px;color:var(--brand-6);margin-bottom:10px}
+.foco-head i{color:#D4850A}
+.foco-count{background:var(--brand-6);color:var(--brand-on);border-radius:999px;font-size:11px;font-weight:600;padding:1px 9px;margin-left:2px}
+.sec-sub{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.chips-row{display:flex;gap:8px;flex-wrap:wrap;padding:0 18px 12px}
+.chip{border:1px solid var(--border);background:var(--card);color:var(--muted);border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+.chip:hover{border-color:var(--brand-6);color:var(--brand-6)}
+.chip.active{background:var(--brand-6);border-color:var(--brand-6);color:var(--brand-on)}
+.btn-loadmore{border:1px solid var(--brand-6);background:var(--card);color:var(--brand-6);border-radius:8px;padding:9px 22px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+.btn-loadmore:hover{background:var(--brand-6);color:var(--brand-on)}
+.list-end{text-align:center;color:var(--muted);font-size:12px;padding:14px 0 4px}
+/* Progress bar (indicacoes) */
+.progress-track{height:10px;background:#EBEFEC;border-radius:999px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--brand-7),var(--brand-4));border-radius:999px;transition:width .6s ease}
+.share-btn{display:inline-flex;align-items:center;gap:8px;background:#25D366;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:filter .15s}
+.share-btn:hover{filter:brightness(.95)}
+/* Preview marca */
+.brand-preview{border-radius:16px;overflow:hidden;border:1px solid var(--border);max-width:300px;box-shadow:0 6px 20px rgba(0,0,0,.08)}
+.bp-header{padding:14px 16px;color:#fff;display:flex;align-items:center;gap:10px}
+.bp-avatar{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-weight:700;overflow:hidden}
+.bp-avatar img{width:100%;height:100%;object-fit:cover}
+.bp-body{background:#ECE5DD;padding:16px;min-height:120px}
+.bp-bubble{background:#fff;border-radius:4px 12px 12px 12px;padding:10px 12px;font-size:13px;color:#222;line-height:1.45;box-shadow:0 1px 1px rgba(0,0,0,.1);max-width:90%}
+.bp-time{font-size:10px;color:#888;text-align:right;margin-top:4px}
+.skel{background:linear-gradient(90deg,#eee 25%,#f5f5f5 37%,#eee 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:6px}
+@keyframes skel{0%{background-position:100% 50%}100%{background-position:0 50%}}
 </style>
 </head>
 <body>
@@ -1879,7 +1953,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
   <!-- SIDEBAR -->
   <nav id="sidebar">
     <div class="sidebar-brand">
-      <div class="sidebar-brand-name">NutriDeby</div>
+      <div class="sidebar-brand-name" id="brandNameSide">NutriDeby</div>
       <div class="sidebar-brand-tag">Painel Clínico</div>
     </div>
 
@@ -1961,11 +2035,12 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
       <button class="topbar-hamburger" onclick="toggleSidebar()">
         <span></span><span></span><span></span>
       </button>
-      <span class="topbar-logo">NutriDeby</span>
+      <span class="topbar-logo" id="brandNameTop">NutriDeby</span>
       <span class="topbar-sep"></span>
       <span class="topbar-page" id="topbarPage">Painel Clínico</span>
       <div class="topbar-right">
         <div class="topbar-nutri">Bem-vinda, <strong id="tNome"></strong></div>
+        <button class="theme-toggle" id="themeToggle" title="Alternar tema claro/escuro" onclick="toggleDarkMode()"><i class="fa-solid fa-moon" id="themeIcon"></i></button>
         <div class="topbar-notif">
           <button class="topbar-notif-btn" id="notifBtn" title="Alertas">
             <i class="fa-solid fa-bell"></i>
@@ -2010,14 +2085,25 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
           </div>
         </div>
 
-        <div class="widget">
-          <div class="widget-header">
-            <div class="widget-icon red"><i class="fa-solid fa-triangle-exclamation"></i></div>
-            <div class="widget-title">Precisam de atenção agora</div>
+        <div class="insight-grid">
+          <div class="widget" style="flex:2;min-width:0">
+            <div class="widget-header">
+              <div class="widget-icon red"><i class="fa-solid fa-triangle-exclamation"></i></div>
+              <div class="widget-title">Precisam de atenção agora</div>
+            </div>
+            <div class="widget-body" id="listAtencao">
+              <div class="empty-state">
+                <div class="empty-icon"><i class="fa-solid fa-spinner fa-spin"></i></div>
+              </div>
+            </div>
           </div>
-          <div class="widget-body" id="listAtencao">
-            <div class="empty-state">
-              <div class="empty-icon"><i class="fa-solid fa-spinner fa-spin"></i></div>
+          <div class="widget chart-widget" style="flex:1;min-width:240px">
+            <div class="widget-header">
+              <div class="widget-icon"><i class="fa-solid fa-chart-pie"></i></div>
+              <div class="widget-title">Status da base</div>
+            </div>
+            <div class="widget-body">
+              <div style="position:relative;height:230px"><canvas id="chartStatus"></canvas></div>
             </div>
           </div>
         </div>
@@ -2037,6 +2123,12 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
               <input id="searchInput" type="text" placeholder="Buscar paciente..." oninput="filterTodos()"
                 style="padding:7px 12px;border:1px solid var(--border);border-radius:7px;font-size:13px;font-family:inherit;outline:none;width:220px"/>
             </div>
+          </div>
+          <div id="todosChips" class="chips-row">
+            <button class="chip active" data-f="todos" onclick="setTodosFiltro('todos')">Todos</button>
+            <button class="chip" data-f="emdia" onclick="setTodosFiltro('emdia')">Em dia</button>
+            <button class="chip" data-f="atencao" onclick="setTodosFiltro('atencao')">Atenção</button>
+            <button class="chip" data-f="inativo" onclick="setTodosFiltro('inativo')">Inativos</button>
           </div>
           <div class="widget-body" id="listTodos">
             <div class="empty-state">
@@ -2119,6 +2211,8 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
                   <input type="color" id="mbCorP" style="width:44px;height:36px;border:1.5px solid var(--border);border-radius:7px;cursor:pointer;padding:2px"/>
                   <input class="field-input" id="mbCorPHex" placeholder="#2ECC71" type="text" style="flex:1" oninput="syncColor('mbCorP',this.value)"/>
                 </div>
+                <div class="preset-row" id="mbPresets"></div>
+                <div style="font-size:11px;color:var(--muted);margin-top:8px"><i class="fa-solid fa-wand-magic-sparkles"></i> Escolha uma cor e veja o painel inteiro mudar na hora. A paleta de tons e a cor do texto são geradas automaticamente.</div>
               </div>
               <div>
                 <label class="field-label">Cor secundária</label>
@@ -2148,9 +2242,21 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
           </div>
         </div>
         <div class="widget" style="margin-top:20px">
-          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-eye"></i></div><div class="widget-title">Preview do link do paciente</div></div>
-          <div class="widget-body" style="padding:20px;font-size:13px;color:var(--muted)">
-            Endpoint mobile: <code style="background:var(--bg-subtle);padding:2px 6px;border-radius:4px">GET /tenant/<span id="mbSlugLink">dra-debora</span>/config</code>
+          <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-eye"></i></div><div class="widget-title">Pré-visualização em tempo real</div></div>
+          <div class="widget-body" style="padding:24px;display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+            <div class="brand-preview" id="bpCard">
+              <div class="bp-header" id="bpHeader" style="background:#1B7A4E">
+                <div class="bp-avatar" id="bpAvatar">A</div>
+                <div><div id="bpName" style="font-weight:700;font-size:14px">Assistente</div><div style="font-size:11px;opacity:.85">online</div></div>
+              </div>
+              <div class="bp-body">
+                <div class="bp-bubble" id="bpMsg">Olá! Sou a assistente da sua nutricionista.<div class="bp-time">agora</div></div>
+              </div>
+            </div>
+            <div style="flex:1;min-width:220px;font-size:13px;color:var(--muted);line-height:1.7">
+              <p style="margin-bottom:10px">É assim que sua paciente vê o app, com as suas cores e a sua identidade.</p>
+              Endpoint mobile: <code style="background:var(--bg-subtle);padding:2px 6px;border-radius:4px">GET /tenant/<span id="mbSlugLink">dra-debora</span>/config</code>
+            </div>
           </div>
         </div>
       </div>
@@ -2169,10 +2275,15 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
         <div class="widget" style="margin-bottom:20px">
           <div class="widget-header"><div class="widget-icon"><i class="fa-solid fa-link"></i></div><div class="widget-title">Seu código de indicação</div></div>
           <div class="widget-body" style="padding:20px">
-            <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Compartilhe seu ID com outras nutricionistas. Quando a admin cadastra uma indicada, informa seu ID.</p>
-            <div style="display:flex;align-items:center;gap:10px">
+            <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Compartilhe seu código com outras nutricionistas. Quando a admin cadastra uma indicada, informa o seu ID.</p>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <div style="font-size:32px;font-weight:700;color:var(--brand);letter-spacing:2px" id="indCodigo">—</div>
               <button onclick="copiarCodigo()" style="padding:8px 16px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:13px;cursor:pointer;font-family:inherit"><i class="fa-solid fa-copy"></i> Copiar</button>
+              <button class="share-btn" onclick="compartilharWA()"><i class="fa-brands fa-whatsapp"></i> Compartilhar</button>
+            </div>
+            <div style="margin-top:18px">
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:600"><span id="progLabel">Progresso até a próxima faixa</span><span id="progPct"></span></div>
+              <div class="progress-track"><div class="progress-fill" id="progFill" style="width:0%"></div></div>
             </div>
             <div style="margin-top:16px;padding:14px;background:var(--bg-subtle);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.8">
               <strong style="color:var(--text)">Tabela de descontos:</strong><br>
@@ -2283,6 +2394,62 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 
 <script>
 'use strict';
+
+/* =====================================================================
+   MOTOR DE TEMA DINAMICO (white-label estilo Ant Design / Arco)
+   - Deriva uma escala de 10 tons a partir de UMA cor da marca
+   - Calcula a cor de texto sobre a marca por contraste WCAG
+   - Alterna claro/escuro e persiste a preferencia
+   ===================================================================== */
+var BRAND_PRESETS=[
+  {name:'Verde Clinico',hex:'#1B7A4E'},
+  {name:'Esmeralda',hex:'#00B42A'},
+  {name:'Teal',hex:'#0D9488'},
+  {name:'Azul',hex:'#2563EB'},
+  {name:'Indigo',hex:'#4F46E5'},
+  {name:'Roxo',hex:'#7C3AED'},
+  {name:'Magenta',hex:'#DB2777'},
+  {name:'Coral',hex:'#E11D48'},
+  {name:'Laranja',hex:'#EA580C'},
+  {name:'Ambar',hex:'#D97706'}
+];
+function _hexToRgb(h){h=String(h||'').replace('#','').trim();if(h.length===3){h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];}var n=parseInt(h,16);if(isNaN(n)||h.length!==6)return null;return{r:(n>>16)&255,g:(n>>8)&255,b:n&255};}
+function _rgbToHex(r,g,b){var f=function(x){x=Math.round(Math.max(0,Math.min(255,x))).toString(16);return x.length===1?'0'+x:x;};return '#'+f(r)+f(g)+f(b);}
+function _rgbToHsl(r,g,b){r/=255;g/=255;b/=255;var mx=Math.max(r,g,b),mn=Math.min(r,g,b),h,s,l=(mx+mn)/2;if(mx===mn){h=s=0;}else{var d=mx-mn;s=l>0.5?d/(2-mx-mn):d/(mx+mn);switch(mx){case r:h=(g-b)/d+(g<b?6:0);break;case g:h=(b-r)/d+2;break;default:h=(r-g)/d+4;}h/=6;}return{h:h*360,s:s*100,l:l*100};}
+function _hslToHex(h,s,l){h/=360;s/=100;l/=100;var r,g,b;if(s===0){r=g=b=l;}else{var hue=function(p,q,t){if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};var q=l<0.5?l*(1+s):l+s-l*s;var p=2*l-q;r=hue(p,q,h+1/3);g=hue(p,q,h);b=hue(p,q,h-1/3);}return _rgbToHex(r*255,g*255,b*255);}
+/* Luminancia relativa WCAG -> escolhe texto branco ou escuro */
+function _readableOn(hex){var c=_hexToRgb(hex);if(!c)return '#FFFFFF';var f=function(v){v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);};var L=0.2126*f(c.r)+0.7152*f(c.g)+0.0722*f(c.b);return L>0.45?'#16201B':'#FFFFFF';}
+/* Gera escala 1..10 (claro->escuro) a partir da cor da marca (color-6) */
+function buildBrandScale(hex){var rgb=_hexToRgb(hex);if(!rgb)rgb=_hexToRgb('#1B7A4E');var hsl=_rgbToHsl(rgb.r,rgb.g,rgb.b);var Ls=[95,87,77,65,53,hsl.l,hsl.l-9,hsl.l-18,hsl.l-27,hsl.l-36];var scale=[];for(var i=0;i<10;i++){var l=i===5?hsl.l:Ls[i];l=Math.max(8,Math.min(97,l));var s=i<5?Math.max(28,hsl.s-(5-i)*3):hsl.s;scale.push(_hslToHex(hsl.h,s,l));}return scale;}
+function applyBrand(hex){var scale=buildBrandScale(hex);var root=document.documentElement;for(var i=0;i<10;i++){root.style.setProperty('--brand-'+(i+1),scale[i]);}root.style.setProperty('--brand',scale[5]);root.style.setProperty('--brand-on',_readableOn(scale[5]));var dark=root.getAttribute('data-theme')==='dark';if(!dark){root.style.setProperty('--brand-soft',scale[0]);}try{localStorage.setItem('nt_brand',hex);}catch(e){}var sw=document.querySelectorAll('.preset-sw');for(var k=0;k<sw.length;k++){sw[k].classList.toggle('active',(sw[k].getAttribute('data-hex')||'').toLowerCase()===String(hex).toLowerCase());}}
+function setTheme(mode){var root=document.documentElement;if(mode==='dark'){root.setAttribute('data-theme','dark');}else{root.removeAttribute('data-theme');}try{localStorage.setItem('nt_theme',mode);}catch(e){}var ic=document.getElementById('themeIcon');if(ic)ic.className=mode==='dark'?'fa-solid fa-sun':'fa-solid fa-moon';var cur=localStorage.getItem('nt_brand')||'#1B7A4E';applyBrand(cur);}
+function toggleDarkMode(){var isDark=document.documentElement.getAttribute('data-theme')==='dark';setTheme(isDark?'light':'dark');}
+function initTheme(){var t=null,b=null;try{t=localStorage.getItem('nt_theme');b=localStorage.getItem('nt_brand');}catch(e){}if(!t){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}setTheme(t);if(b)applyBrand(b);applyLogo(_savedLogo());}
+/* Aplica logo da marca no topbar/sidebar; sem logo, mostra o nome textual */
+function _savedLogo(){try{return localStorage.getItem('nt_logo')||'';}catch(e){return '';}}
+function applyLogo(url){
+  var slots=[{id:'brandNameTop',txt:'NutriDeby'},{id:'brandNameSide',txt:'NutriDeby'}];
+  slots.forEach(function(s){
+    var el=document.getElementById(s.id);if(!el)return;
+    if(url){
+      el.innerHTML='';
+      var im=new Image();im.alt=s.txt;im.style.maxHeight=(s.id==='brandNameSide'?'34px':'26px');im.style.maxWidth='150px';im.style.objectFit='contain';im.style.display='block';
+      im.onerror=function(){el.textContent=s.txt;};
+      im.src=url;el.appendChild(im);
+    }else{el.textContent=s.txt;}
+  });
+}
+/* Aplica cor + logo a partir do objeto de marca e persiste localmente */
+function applyBranding(m){
+  if(!m)return;
+  if(m.cor_primaria&&/^#[0-9A-Fa-f]{6}$/.test(m.cor_primaria)){applyBrand(m.cor_primaria);}
+  var logo=(m.logo_url||'').trim();
+  try{if(logo)localStorage.setItem('nt_logo',logo);else localStorage.removeItem('nt_logo');}catch(e){}
+  applyLogo(logo);
+}
+/* Aplica tema o quanto antes para evitar flash */
+initTheme();
+
 var _tok=localStorage.getItem('nt');
 var _me=null;
 var _grid=[];
@@ -2341,10 +2508,52 @@ async function carregarMarca(){
     $('mbBoasVindas').value=r.mensagem_boas_vindas||'';
     $('mbSlugPreview').textContent=r.tenant_slug||'...';
     $('mbSlugLink').textContent=r.tenant_slug||'...';
+    renderBrandPresets();
+    bindBrandPreview();updateBrandPreview();
+    applyBranding(r);
   }catch(e){console.error('marca',e);}
 }
 function syncColor(inputId, hex){
   if(/^#[0-9A-Fa-f]{6}$/.test(hex)){var el=$(inputId);if(el)el.value=hex;}
+  updateBrandPreview();
+}
+var _bpBound=false;
+function bindBrandPreview(){
+  if(_bpBound)return;_bpBound=true;
+  ['mbNomeAgente','mbCorP','mbCorPHex','mbCorS','mbCorSHex','mbLogo','mbBoasVindas','mbSlug'].forEach(function(id){
+    var el=$(id);if(el)el.addEventListener('input',updateBrandPreview);
+  });
+}
+/* Renderiza os presets de cor (paleta estilo Arco) */
+function renderBrandPresets(){
+  var host=$('mbPresets');if(!host)return;if(host.dataset.done)return;host.dataset.done='1';
+  host.innerHTML=BRAND_PRESETS.map(function(p){return '<div class="preset-sw" title="'+p.name+'" data-hex="'+p.hex+'" style="background:'+p.hex+'"></div>';}).join('');
+  var sw=host.querySelectorAll('.preset-sw');
+  for(var i=0;i<sw.length;i++){(function(el){el.addEventListener('click',function(){pickBrandPreset(el.getAttribute('data-hex'));});})(sw[i]);}
+}
+function pickBrandPreset(hex){
+  $('mbCorP').value=hex;$('mbCorPHex').value=hex.toUpperCase();
+  applyBrand(hex);updateBrandPreview();
+}
+function updateBrandPreview(){
+  var nome=($('mbNomeAgente').value||'').trim()||'Assistente';
+  var corP=($('mbCorPHex').value||'').trim()||'#1B7A4E';
+  var logo=($('mbLogo').value||'').trim();
+  var msg=($('mbBoasVindas').value||'').trim()||('Olá! Sou '+nome+'. Como posso te ajudar hoje?');
+  var slug=($('mbSlug').value||'').trim()||'dra-debora';
+  if(/^#[0-9A-Fa-f]{6}$/.test(corP)){$('mbCorP').value=corP;$('bpHeader').style.background=corP;applyBrand(corP);}
+  $('bpName').textContent=nome;
+  $('bpMsg').innerHTML=esc(msg)+'<div class="bp-time">agora</div>';
+  var av=$('bpAvatar');
+  var ini=nome.charAt(0).toUpperCase();
+  if(logo){
+    av.textContent='';
+    var im=new Image();
+    im.src=logo;
+    im.onerror=function(){av.textContent=ini;};
+    im.onload=function(){av.textContent='';av.appendChild(im);};
+  } else { av.textContent=ini; }
+  $('mbSlugPreview').textContent=slug;$('mbSlugLink').textContent=slug;
 }
 async function salvarMarca(){
   $('mbErr').style.display='none';$('mbOk').style.display='none';
@@ -2360,10 +2569,11 @@ async function salvarMarca(){
   };
   try{
     await authPut('/api/nutri/minha-marca',body);
+    applyBranding(body);
     $('mbOk').style.display='';
     $('mbSlugPreview').textContent=body.tenant_slug||'...';
     $('mbSlugLink').textContent=body.tenant_slug||'...';
-    showToast('Marca salva com sucesso!');
+    toast('Marca salva com sucesso!','ok');
   }catch(e){
     $('mbErr').textContent=(e&&e.detail)||'Erro ao salvar.';
     $('mbErr').style.display='';
@@ -2380,6 +2590,14 @@ async function renderIndicacoes(){
     $('indTotal').textContent=r.total_indicacoes;
     $('indDesconto').textContent=r.desconto_percent+'%';
     $('indFaltam').textContent=r.proxima_faixa?r.faltam_para_proxima+' para '+r.proxima_faixa+'%':'Máximo atingido';
+    // progresso ate proxima faixa
+    var total=r.total_indicacoes||0;
+    var meta=r.proxima_faixa?(total+(r.faltam_para_proxima||0)):total;
+    var pct=meta>0?Math.min(100,Math.round((total/meta)*100)):100;
+    $('progFill').style.width=pct+'%';
+    $('progPct').textContent=pct+'%';
+    $('progLabel').textContent=r.proxima_faixa?('Faltam '+r.faltam_para_proxima+' para '+r.proxima_faixa+'% de desconto'):'Desconto máximo atingido — parabéns!';
+    window._meuCodigoInd=r.meu_id;
     var el=$('indLista');
     if(!r.indicadas||!r.indicadas.length){
       el.innerHTML='<div class="empty-state"><div class="empty-title">Nenhuma indicação ainda</div><div class="empty-sub">Compartilhe seu código com colegas!</div></div>';
@@ -2392,7 +2610,15 @@ async function renderIndicacoes(){
 function copiarCodigo(){
   var cod=($('indCodigo').textContent||'').trim();
   if(!cod||cod==='—') return;
-  navigator.clipboard.writeText(cod).then(function(){showToast('Código copiado!');}).catch(function(){});
+  navigator.clipboard.writeText(cod).then(function(){toast('Código copiado!','ok');}).catch(function(){});
+}
+function compartilharWA(){
+  var cod=($('indCodigo').textContent||'').trim();
+  if(!cod||cod==='—'){toast('Código indisponível','err');return;}
+  var msg='Oi! Estou usando o NutriDeby para acompanhar meus pacientes com IA e gostei muito. '
+    +'Se quiser conhecer, use meu código de indicação: '+cod+'. '
+    +'Assim a gente ganha desconto na mensalidade. ';
+  window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank');
 }
 
 /* -- Equipe -- */
@@ -2443,7 +2669,7 @@ async function addNutri(){
     var refId=$('eqRefId')&&$('eqRefId').value?parseInt($('eqRefId').value):null;
     await authPost('/api/nutri/setup',{name:nome,crn:crn,email:email,role:role,send_invite:invite,referred_by_id:refId});
     $('eqNome').value='';$('eqCrn').value='';$('eqEmail').value='';if($('eqRefId'))$('eqRefId').value='';
-    showToast(invite?'Nutricionista adicionada — convite enviado por e-mail!':'Nutricionista adicionada com sucesso!');
+    toast(invite?'Nutricionista adicionada — convite enviado por e-mail!':'Nutricionista adicionada com sucesso!','ok');
     renderEquipe();
   }catch(e){
     errEl.textContent=(e&&e.detail)||'Erro ao salvar. Verifique se o CRN ja esta cadastrado.';
@@ -2503,6 +2729,7 @@ function showMain(){
   $('sAvatar').textContent=firstName.charAt(0).toUpperCase();
   if(_me.role==='admin'){['divEquipe','subEquipe','itemEquipe'].forEach(function(id){var el=$(id);if(el)el.style.display='';});}
   carregar();
+  authGet('/api/nutri/minha-marca').then(applyBranding).catch(function(){});
 }
 function doLogout(){localStorage.removeItem('nt');localStorage.removeItem('nm');location.reload();}
 
@@ -2525,8 +2752,11 @@ async function carregar(){
 }
 
 function updateStats(g){
-  var inat7=_grid.filter(function(p){return diasSem(p)>=7;}).length;
-  var inat14=_grid.filter(function(p){return diasSem(p)>=14;}).length;
+  var inat7=_grid.filter(function(p){var d=diasSem(p);return d===null||d>=7;}).length;
+  var inat14=_grid.filter(function(p){var d=diasSem(p);return d===null||d>=14;}).length;
+  var emDia=_grid.filter(function(p){var d=diasSem(p);return d!==null&&d<7;}).length;
+  var atencao=_grid.filter(function(p){var d=diasSem(p);return d!==null&&d>=7&&d<14;}).length;
+  window._statusCounts={emDia:emDia,atencao:atencao,inativo:inat14,total:_grid.length};
   var semana=new Date(Date.now()-7*86400000).toISOString();
   var docs7=_records.filter(function(r){return r.created_at&&r.created_at>semana;}).length;
 
@@ -2539,9 +2769,8 @@ function updateStats(g){
   var saud=h<12?'Bom dia':h<18?'Boa tarde':'Boa noite';
   var nome=(_me.name||'').split(' ')[0];
 
-  var urgentes=_grid.filter(function(p){return diasSem(p)>=7;});
-  var n=urgentes.length;
-  $('ctxTitle').textContent=n>0?(n===1?'1 paciente precisa de voce hoje.':n+' pacientes precisam de voce hoje.'):'Tudo em ordem por enquanto.';
+  var n=inat7;
+  $('ctxTitle').textContent=n>0?(n===1?'1 paciente precisa de você hoje.':n+' pacientes precisam de você hoje.'):'Tudo em ordem por enquanto.';
   $('ctxSub').textContent=saud+', '+nome+'.';
 
   // badge sidebar
@@ -2551,6 +2780,21 @@ function updateStats(g){
   }
 
   $('todosSub').textContent=(_grid.length||0)+' pacientes cadastrados';
+  renderChartStatus();
+}
+
+/* ── Grafico de status (donut) ── */
+var _chartStatus=null;
+function renderChartStatus(){
+  var c=window._statusCounts;if(!c)return;
+  var cv=$('chartStatus');if(!cv||typeof Chart==='undefined')return;
+  var data=[c.emDia,c.atencao,c.inativo];
+  if(_chartStatus){_chartStatus.data.datasets[0].data=data;_chartStatus.update();return;}
+  _chartStatus=new Chart(cv.getContext('2d'),{
+    type:'doughnut',
+    data:{labels:['Em dia','Atenção','Inativos'],datasets:[{data:data,backgroundColor:['#1B7A4E','#D4850A','#C0392B'],borderWidth:0}]},
+    options:{cutout:'68%',plugins:{legend:{position:'bottom',labels:{usePointStyle:true,boxWidth:8,padding:14,font:{size:12,family:'Inter'}}}},responsive:true,maintainAspectRatio:false}
+  });
 }
 
 /* ── Navigation ── */
@@ -2564,7 +2808,7 @@ function showView(view,e,extra){
   });
 
   // Page titles for topbar
-  var titles={atencao:'Inicio',todos:'Pacientes',padroes:'Padroes Comportamentais',docs:'Documentos',marca:'Minha Marca',indicacoes:'Indicações',equipe:'Equipe'};
+  var titles={atencao:'Início',todos:'Pacientes',padroes:'Padrões Comportamentais',docs:'Documentos',marca:'Minha Marca',indicacoes:'Indicações',equipe:'Equipe'};
   $('topbarPage').textContent=titles[view]||'';
 
   // Show/hide content panels
@@ -2586,42 +2830,75 @@ function showView(view,e,extra){
 /* ── Patient rendering ── */
 function renderAtencao(){
   var lista=_grid
-    .filter(function(p){return diasSem(p)>=7||(p.padrao&&p.padrao.fase==='CONFRONTO');})
-    .sort(function(a,b){return diasSem(b)-diasSem(a);});
+    .filter(function(p){var d=diasSem(p);return d===null||d>=7||(p.padrao&&p.padrao.fase==='CONFRONTO');})
+    .sort(function(a,b){return diasOrd(b)-diasOrd(a);});
   var el=$('listAtencao');
   if(!lista.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon"><i class="fa-solid fa-circle-check" style="color:var(--safe)"></i></div><div class="empty-title">Tudo em ordem</div><div class="empty-sub">Nenhuma paciente precisa de atencao agora.</div></div>';
+    el.innerHTML='<div class="empty-state"><div class="empty-icon"><i class="fa-solid fa-circle-check" style="color:var(--safe)"></i></div><div class="empty-title">Tudo em ordem</div><div class="empty-sub">Nenhum paciente precisa de atenção agora.</div></div>';
     return;
   }
-  el.innerHTML='<div class="patient-list">'+lista.map(function(p){return patientRow(p);}).join('')+'</div>';
+  // Foco do dia: top 5
+  var foco=lista.slice(0,5);
+  var fh='<div class="foco-dia"><div class="foco-head"><i class="fa-solid fa-bolt"></i> Foco do dia <span class="foco-count">'+foco.length+'</span></div>'
+    +'<div class="patient-list">'+foco.map(function(p){return patientRow(p);}).join('')+'</div></div>';
+  if(lista.length>5){
+    fh+='<div class="sec-sub" style="margin:18px 0 8px">Demais pacientes ('+(lista.length-5)+')</div>'
+      +'<div class="patient-list">'+lista.slice(5,55).map(function(p){return patientRow(p);}).join('')+'</div>';
+    if(lista.length>55)fh+='<div style="text-align:center;margin-top:14px"><button class="btn-loadmore" onclick="_atTodos()">Ver todos na aba Pacientes</button></div>';
+  }
+  el.innerHTML=fh;
 }
+function _atTodos(){showView('todos');}
 
 var _todosQ='';
+var _todosFiltro='todos';
+var _todosLimit=50;
 function filterTodos(){
   _todosQ=($('searchInput')||{value:''}).value.toLowerCase().trim();
+  _todosLimit=50;
   renderTodos();
 }
-
+function setTodosFiltro(f){
+  _todosFiltro=f;_todosLimit=50;
+  document.querySelectorAll('#todosChips .chip').forEach(function(b){b.classList.toggle('active',b.dataset.f===f);});
+  renderTodos();
+}
+function _matchFiltro(p){
+  if(_todosFiltro==='todos')return true;
+  var d=diasSem(p);
+  if(_todosFiltro==='emdia')return d!==null&&d<7;
+  if(_todosFiltro==='atencao')return d!==null&&d>=7&&d<14;
+  if(_todosFiltro==='inativo')return d===null||d>=14;
+  return true;
+}
 function renderTodos(){
   var el=$('listTodos');
   if(!_grid.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-title">Nenhuma paciente cadastrada</div></div>';
+    el.innerHTML='<div class="empty-state"><div class="empty-title">Nenhum paciente cadastrado</div></div>';
     return;
   }
-  var rows=_grid.slice();
+  var rows=_grid.slice().filter(_matchFiltro);
   if(_todosQ){
     rows=rows.filter(function(p){
       return (p.nome||'').toLowerCase().indexOf(_todosQ)>=0
           || (p.phone||'').indexOf(_todosQ)>=0;
     });
   }
-  rows.sort(function(a,b){return diasSem(b)-diasSem(a);});
+  rows.sort(function(a,b){return diasOrd(b)-diasOrd(a);});
   if(!rows.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-sub">Nenhum resultado para "'+esc(_todosQ)+'".</div></div>';
+    el.innerHTML='<div class="empty-state"><div class="empty-sub">Nenhum resultado'+(_todosQ?' para "'+esc(_todosQ)+'"':'')+'.</div></div>';
     return;
   }
-  el.innerHTML='<div class="patient-list">'+rows.map(function(p){return patientRow(p);}).join('')+'</div>';
+  var shown=rows.slice(0,_todosLimit);
+  var h='<div class="patient-list">'+shown.map(function(p){return patientRow(p);}).join('')+'</div>';
+  if(rows.length>_todosLimit){
+    h+='<div style="text-align:center;margin-top:16px"><button class="btn-loadmore" onclick="_moreTodos()">Carregar mais ('+(rows.length-_todosLimit)+' restantes)</button></div>';
+  }else{
+    h+='<div class="list-end">Exibindo '+rows.length+' paciente(s)</div>';
+  }
+  el.innerHTML=h;
 }
+function _moreTodos(){_todosLimit+=50;renderTodos();}
 
 function renderPatternSummary(){
   var resumo={ESCAPE:0,CONFRONTO:0,RETORNO:0,CULPA:0};
@@ -2631,7 +2908,7 @@ function renderPatternSummary(){
   var phases=[
     {fase:'ESCAPE',label:'Escape alimentar',dot:'dot-escape'},
     {fase:'CONFRONTO',label:'Confronto',dot:'dot-confronto'},
-    {fase:'RETORNO',label:'Retorno ao padrao',dot:'dot-retorno'},
+    {fase:'RETORNO',label:'Retorno ao padrão',dot:'dot-retorno'},
     {fase:'CULPA',label:'Culpa emocional',dot:'dot-culpa'},
   ];
   $('patternSummary').innerHTML=phases.map(function(c){
@@ -2669,8 +2946,10 @@ function renderPatternList(filtro){
 
 function patientRow(p,showPhase){
   var di=diasSem(p);
-  var accentColor=di>=14?'#C0392B':di>=7?'#D4850A':(p.padrao&&p.padrao.fase==='CONFRONTO'?'#C0392B':'#1B7A4E');
-  var avatarClass=di>=14?'red':di>=7?'amber':'';
+  var inativo=(di===null||di>=14);
+  var atencao=(di!==null&&di>=7&&di<14);
+  var accentColor=inativo?'#C0392B':atencao?'#D4850A':(p.padrao&&p.padrao.fase==='CONFRONTO'?'#C0392B':'#1B7A4E');
+  var avatarClass=inativo?'red':atencao?'amber':'';
   var inicial=titleCase(p.nome||'?').charAt(0);
   var dname=esc(titleCase(p.nome||'Paciente'));
   var desc=descricao(p,di);
@@ -2679,7 +2958,7 @@ function patientRow(p,showPhase){
   var phaseBadge='';
   if(showPhase&&p.padrao){
     var phaseMap={ESCAPE:'phase-escape',CONFRONTO:'phase-confronto',RETORNO:'phase-retorno',CULPA:'phase-culpa'};
-    var phaseLabel={ESCAPE:'Escape alimentar',CONFRONTO:'Confronto',RETORNO:'Retorno ao padrao',CULPA:'Culpa emocional'};
+    var phaseLabel={ESCAPE:'Escape alimentar',CONFRONTO:'Confronto',RETORNO:'Retorno ao padrão',CULPA:'Culpa emocional'};
     var dotMap={ESCAPE:'dot-escape',CONFRONTO:'dot-confronto',RETORNO:'dot-retorno',CULPA:'dot-culpa'};
     phaseBadge='<span class="phase-badge '+phaseMap[p.padrao.fase]+'" style="margin-top:4px">'
       +'<span class="pattern-dot '+dotMap[p.padrao.fase]+'"></span>'
@@ -2702,15 +2981,16 @@ function patientRow(p,showPhase){
     +'</div>'
     +'<div class="patient-actions">'
     +(p.phone?'<button class="btn-action btn-action-primary" data-id="'+pid+'" data-name="'+nm+'" data-phone="'+ph+'" onclick="doConsult(this.dataset.id,this.dataset.name,this.dataset.phone)"><i class="fa-solid fa-video"></i> Chamar</button>':'')
-    +(p.phone?'<button class="btn-action btn-action-secondary" data-phone="'+ph+'" onclick="openWA(this.dataset.phone)"><i class="fa-brands fa-whatsapp"></i></button>':'')
-    +'<button class="btn-action btn-action-ghost" data-id="'+pid+'" onclick="openDrawer(this.dataset.id)"><i class="fa-solid fa-folder-open"></i></button>'
+    +(p.phone?'<button class="btn-action btn-action-secondary" title="Enviar WhatsApp" data-phone="'+ph+'" onclick="openWA(this.dataset.phone)"><i class="fa-brands fa-whatsapp"></i></button>':'')
+    +'<button class="btn-action btn-action-ghost" title="Abrir prontuário" data-id="'+pid+'" onclick="openDrawer(this.dataset.id)"><i class="fa-solid fa-folder-open"></i></button>'
     +'</div>'
     +'</div>';
 }
 
 function descricao(p,di){
-  if(di>=14)return 'Sem registro ha '+di+' dias — pode estar precisando de apoio';
-  if(di>=7)return 'Nao aparece ha '+di+' dias';
+  if(di===null||di===undefined)return 'Sem registro recente — ainda não ativado(a) no app';
+  if(di>=14)return 'Sem registro há '+di+' dias — pode estar precisando de apoio';
+  if(di>=7)return 'Não aparece há '+di+' dias';
   if(p.padrao){
     var fase=p.padrao.fase;
     var gat=(p.padrao.gatilhos||[]).slice(0,3).join(', ');
@@ -2718,11 +2998,11 @@ function descricao(p,di){
     if(fase==='CONFRONTO')d='Em conflito com a dieta';
     else if(fase==='ESCAPE')d='Evitando os compromissos';
     else if(fase==='RETORNO')d='Voltando ao ritmo';
-    else if(fase==='CULPA')d='Sentindo culpa pos refeicao';
+    else if(fase==='CULPA')d='Sentindo culpa pós-refeição';
     return d+(gat?' — '+gat:'');
   }
   if((p.streak||0)>=7)return 'Indo muito bem — '+p.streak+' dias seguidos';
-  return di===0?'Registrou hoje':'Ultimo registro ha '+(di===1?'1 dia':di+' dias');
+  return di===0?'Registrou hoje':'Último registro há '+(di===1?'1 dia':di+' dias');
 }
 
 function renderDocs(){
@@ -2792,7 +3072,7 @@ async function openDrawer(pid){
   var di=diasSem(p);
   $('dName').textContent=titleCase(p.nome);
   $('dSub').textContent=descricao(p,di);
-  $('dBody').innerHTML='<div style="text-align:center;padding:24px;color:var(--muted)"><i class="fa-solid fa-spinner fa-spin"></i> Carregando dados...</div>';
+  $('dBody').innerHTML='<div style="padding:8px 0"><div class="skel" style="height:46px;margin-bottom:10px"></div><div class="skel" style="height:46px;margin-bottom:10px"></div><div class="skel" style="height:80px"></div></div>';
   $('dBtnChamar').style.display=p.phone?'':'none';
   $('dBtnMsg').style.display=p.phone?'':'none';
   $('dBtnChamar').onclick=function(){closeDrawerBtn();doConsult(p.id,p.nome,p.phone||'');};
@@ -2809,15 +3089,15 @@ async function openDrawer(pid){
       +'<div class="drawer-label">Status IA</div>'
       +'<div class="drawer-value" style="display:flex;align-items:center;gap:8px">'
       +'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+(iaOk?'#1B7A4E':'#9CA3AF')+'"></span>'
-      +(iaOk?'Ativa — '+d.conversas_ia.length+' conversa(s) registradas':'Sem historico de conversas')
+      +(iaOk?'Ativa — '+d.conversas_ia.length+' conversa(s) registradas':'Sem histórico de conversas')
       +'</div></div>';
 
     // Padrão comportamental
     if(p.padrao){
-      var phaseLabel={ESCAPE:'Escape alimentar',CONFRONTO:'Confronto',RETORNO:'Retorno ao padrao',CULPA:'Culpa emocional'};
+      var phaseLabel={ESCAPE:'Escape alimentar',CONFRONTO:'Confronto',RETORNO:'Retorno ao padrão',CULPA:'Culpa emocional'};
       var lb=phaseLabel[p.padrao.fase]||p.padrao.fase;
       var gat=p.padrao.gatilhos||[];
-      html+='<div class="drawer-section"><div class="drawer-label">Padrao comportamental</div>'
+      html+='<div class="drawer-section"><div class="drawer-label">Padrão comportamental</div>'
         +'<div class="drawer-value">'+esc(lb)+' — Ciclo '+(p.padrao.ciclo||1)+'</div>'
         +(gat.length?'<div style="margin-top:6px">'+gat.map(function(g){return '<span class="trigger-tag">'+esc(g)+'</span>';}).join('')+'</div>':'')
         +'</div>';
@@ -2826,11 +3106,11 @@ async function openDrawer(pid){
     // Medidas (peso, composição)
     if(d.medidas&&d.medidas.length){
       var m=d.medidas[0];
-      html+='<div class="drawer-section"><div class="drawer-label">Ultima medicao ('+esc(m.data||'—')+')</div><div class="drawer-value">';
+      html+='<div class="drawer-section"><div class="drawer-label">Última medição ('+esc(m.data||'—')+')</div><div class="drawer-value">';
       if(m.peso)html+='Peso: <strong>'+m.peso+' kg</strong> ';
       if(m.imc)html+='IMC: <strong>'+m.imc+'</strong> ';
       if(m.massa_gorda)html+='Gordura: <strong>'+m.massa_gorda+'%</strong>';
-      if(!m.peso&&!m.imc&&!m.massa_gorda)html+='Dados disponiveis — abra o prontuario para detalhes';
+      if(!m.peso&&!m.imc&&!m.massa_gorda)html+='Dados disponíveis — abra o prontuário para detalhes';
       html+='</div></div>';
     }
 
@@ -2865,7 +3145,7 @@ async function openDrawer(pid){
 
     // Conversas com a IA
     if(d.conversas_ia&&d.conversas_ia.length){
-      html+='<div class="drawer-section"><div class="drawer-label">Ultimas conversas com a IA</div>';
+      html+='<div class="drawer-section"><div class="drawer-label">Últimas conversas com a IA</div>';
       d.conversas_ia.slice(0,4).forEach(function(c){
         var ago=c.quando?timeAgo(c.quando):'';
         if(c.pergunta){
@@ -2879,7 +3159,7 @@ async function openDrawer(pid){
       html+='</div>';
     }
 
-    if(!html){html='<div class="drawer-section" style="color:var(--muted)">Nenhuma informacao clinica disponivel.</div>';}
+    if(!html){html='<div class="drawer-section" style="color:var(--muted)">Nenhuma informação clínica disponível.</div>';}
     $('dBody').innerHTML=html;
   }catch(e){
     $('dBody').innerHTML='<div class="drawer-section" style="color:var(--muted)">Erro ao carregar dados: '+esc(e.message)+'</div>';
@@ -2901,12 +3181,17 @@ async function assinar(id,btn){
 
 /* ── Helpers ── */
 function diasSem(p){
-  if(!p.ultimo_registro)return 999;
+  if(!p.ultimo_registro)return null;
   return Math.floor((Date.now()-new Date(p.ultimo_registro).getTime())/86400000);
 }
+// dias para ordenacao: sem registro vai pro topo (valor alto)
+function diasOrd(p){var d=diasSem(p);return d===null?100000:d;}
 function titleCase(s){
   if(!s)return'';
-  return s.toLowerCase().replace(/\\b\\w/g,function(c){return c.toUpperCase();});
+  return s.toLowerCase().split(/(\\s+)/).map(function(w){
+    if(!w.trim())return w;
+    return w.charAt(0).toUpperCase()+w.slice(1);
+  }).join('');
 }
 function d4badge(s){
   if(!s||s==='NONE')return'<span style="color:var(--muted)">—</span>';

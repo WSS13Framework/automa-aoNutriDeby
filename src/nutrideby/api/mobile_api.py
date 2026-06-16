@@ -192,81 +192,86 @@ def register_patient(
     trial_ends = now + timedelta(days=7)
     hashed = _hash_password(payload.password)
 
-    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
-        with conn.cursor() as cur:
-            # 1. Busca perfil existente:
-            #    csv_import → coluna cpf ou email
-            #    dietbox    → metadata->>'Email' (CPF inexistente no Dietbox)
-            cur.execute(
-                """
-                SELECT id, display_name, source_system
-                FROM patients
-                WHERE cpf = %s
-                   OR email = %s
-                   OR LOWER(metadata->>'Email') = LOWER(%s)
-                ORDER BY CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END
-                LIMIT 1
-                """,
-                (payload.cpf, payload.email, payload.email),
-            )
-            existing = cur.fetchone()
-
-            if existing and existing["source_system"] != "app":
-                # Vincula conta do app ao perfil Dietbox existente
+    try:
+        with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                # 1. Busca perfil existente:
+                #    csv_import → coluna cpf ou email
+                #    dietbox    → metadata->>'Email' (CPF inexistente no Dietbox)
                 cur.execute(
                     """
-                    UPDATE patients SET
-                        hashed_password      = %s,
-                        email                = %s,
-                        cpf                  = %s,
-                        subscription_status  = 'trial',
-                        trial_ends_at        = %s,
-                        updated_at           = %s
-                    WHERE id = %s
+                    SELECT id, display_name, source_system
+                    FROM patients
+                    WHERE cpf = %s
+                       OR email = %s
+                       OR LOWER(metadata->>'Email') = LOWER(%s)
+                    ORDER BY CASE WHEN cpf = %s THEN 0 ELSE 1 END,
+                             CASE source_system WHEN 'dietbox' THEN 0 WHEN 'csv_import' THEN 1 ELSE 2 END
+                    LIMIT 1
                     """,
-                    (hashed, payload.email, payload.cpf, trial_ends, now, existing["id"]),
+                    (payload.cpf, payload.email, payload.email, payload.cpf),
                 )
-                patient_id = existing["id"]
-                name = existing["display_name"] or payload.name
-                linked = True
-            elif existing:
-                # Conta app já existe — rejeita duplicata
-                raise HTTPException(status_code=409, detail="Email ou CPF já cadastrado")
-            else:
-                # Novo paciente — cria normalmente
+                existing = cur.fetchone()
+
+                if existing and existing["source_system"] != "app":
+                    # Vincula conta do app ao perfil Dietbox existente
+                    cur.execute(
+                        """
+                        UPDATE patients SET
+                            hashed_password      = %s,
+                            email                = %s,
+                            cpf                  = %s,
+                            subscription_status  = 'trial',
+                            trial_ends_at        = %s,
+                            updated_at           = %s
+                        WHERE id = %s
+                        """,
+                        (hashed, payload.email, payload.cpf, trial_ends, now, existing["id"]),
+                    )
+                    patient_id = existing["id"]
+                    name = existing["display_name"] or payload.name
+                    linked = True
+                elif existing:
+                    # Conta app já existe — rejeita duplicata
+                    raise HTTPException(status_code=409, detail="Email ou CPF já cadastrado")
+                else:
+                    # Novo paciente — cria normalmente
+                    cur.execute(
+                        """
+                        INSERT INTO patients
+                          (source_system, external_id, display_name, email, cpf,
+                           hashed_password, subscription_status, trial_ends_at, created_at, updated_at)
+                        VALUES ('app', %s, %s, %s, %s, %s, 'trial', %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            f"app:{payload.cpf}",
+                            payload.name,
+                            payload.email,
+                            payload.cpf,
+                            hashed,
+                            trial_ends,
+                            now,
+                            now,
+                        ),
+                    )
+                    patient_id = cur.fetchone()["id"]
+                    name = payload.name
+                    linked = False
+
+                # Registra telefone
                 cur.execute(
                     """
-                    INSERT INTO patients
-                      (source_system, external_id, display_name, email, cpf,
-                       hashed_password, subscription_status, trial_ends_at, created_at, updated_at)
-                    VALUES ('app', %s, %s, %s, %s, %s, 'trial', %s, %s, %s)
-                    RETURNING id
+                    INSERT INTO patient_phones (patient_id, phone, source)
+                    VALUES (%s, %s, 'app_register')
+                    ON CONFLICT (phone) DO NOTHING
                     """,
-                    (
-                        f"app:{payload.cpf}",
-                        payload.name,
-                        payload.email,
-                        payload.cpf,
-                        hashed,
-                        trial_ends,
-                        now,
-                        now,
-                    ),
+                    (patient_id, payload.phone_number),
                 )
-                patient_id = cur.fetchone()["id"]
-                name = payload.name
-                linked = False
-
-            # Registra telefone
-            cur.execute(
-                """
-                INSERT INTO patient_phones (patient_id, phone, source)
-                VALUES (%s, %s, 'app_register')
-                ON CONFLICT (phone) DO NOTHING
-                """,
-                (patient_id, payload.phone_number),
-            )
-            conn.commit()
+                conn.commit()
+    except psycopg.errors.UniqueViolation:
+        # Colisão de e-mail/CPF que escapou da checagem acima → erro limpo, não 500
+        raise HTTPException(status_code=409, detail="Email ou CPF já cadastrado")
 
     secret = settings.jwt_secret or "nutrideby_jwt_dev_secret"
     token = _make_jwt(str(patient_id), name, secret)
