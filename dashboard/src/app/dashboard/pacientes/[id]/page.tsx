@@ -3,6 +3,7 @@ import Link from "next/link";
 import RagSearch from "@/components/RagSearch";
 import EvolutionSection from "@/components/EvolutionSection";
 import PatientQA from "@/components/PatientQA";
+import ComposicaoSection from "@/components/ComposicaoSection";
 
 export const dynamic = "force-dynamic";
 
@@ -30,16 +31,14 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
   }
 
   const meta = (patient.metadata || {}) as Record<string, any>;
-  
-  // Extração de metas do dietbox_meta_export
+
   const metaExportDoc = documents.find(d => d.doc_type === 'dietbox_meta_export');
   let goals: any[] = [];
   if (metaExportDoc) {
     try {
       const parsed = JSON.parse(metaExportDoc.content_preview);
       goals = parsed.items || [];
-    } catch (e) {
-      // Se não for JSON válido, tenta extrair do metadata do paciente
+    } catch {
       goals = meta.meta_export_items ? [{ nome: "Metas registradas no Dietbox" }] : [];
     }
   }
@@ -67,10 +66,10 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Coluna Esquerda: Dados e Metas */}
+        {/* Coluna Esquerda */}
         <div className="lg:col-span-2 space-y-8">
-          
-          {/* Metas de Execução (O Coração do Agente) */}
+
+          {/* Metas de Execução */}
           <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Metas de Execução</h2>
             {goals.length > 0 ? (
@@ -92,6 +91,12 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
             )}
           </section>
 
+          {/* Avaliação Física (Bioimpedância + Composição Corporal) */}
+          <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
+            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Avaliação Física</h2>
+            <ComposicaoSection patientId={params.id} />
+          </section>
+
           {/* Evolução do Paciente */}
           <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Evolução</h2>
@@ -104,7 +109,7 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
             <RagSearch patientId={params.id} />
           </section>
 
-          {/* Documentos Clínicos */}
+          {/* Histórico Clínico */}
           <section className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Histórico Clínico</h2>
             <div className="space-y-4">
@@ -127,7 +132,7 @@ export default async function PacienteDetailPage({ params }: { params: { id: str
           </section>
         </div>
 
-        {/* Coluna Direita: Perfil e Status */}
+        {/* Coluna Direita */}
         <div className="space-y-8">
           <section className="bg-gray-900 rounded-3xl p-8 text-white shadow-xl">
             <h2 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-6">Perfil do Paciente</h2>

@@ -253,3 +253,61 @@ export function askPatient(id: string, question: string) {
     revalidate: 0,
   });
 }
+
+// ── Composição Corporal ───────────────────────────────────────────────────────
+
+export interface BioimpedanciaRecord {
+  id: string;
+  created_at: string;
+  altura_cm: number;
+  peso_kg: number;
+  idade: number;
+  sexo: string;
+  imc: number;
+  gordura_pct: number;
+  massa_muscular_kg: number;
+  massa_muscular_pct: number;
+  massa_gorda_kg: number;
+  massa_magra_kg: number;
+  classificacao_gordura: string;
+  classificacao_imc: string;
+}
+
+export interface ComposicaoRecord {
+  id: string;
+  created_at: string;
+  altura_cm: number;
+  peso_kg: number;
+  idade: number;
+  sexo: string;
+  foto_count: number;
+  fonte: string;
+  imc: number;
+  gordura_pct: number;
+  massa_muscular_kg: number;
+  massa_muscular_pct: number;
+  massa_gorda_kg: number;
+  massa_magra_kg: number;
+  classificacao_gordura: string;
+  classificacao_imc: string;
+  notas_clinicas: string | null;
+  gordura_pct_bio: number | null;
+  gordura_pct_visao: number | null;
+  muscular_pct_bio: number | null;
+  muscular_pct_visao: number | null;
+  gordura_intervalo?: { lo: number | null; hi: number | null };
+}
+
+export function getPatientBioimpedancia(id: string) {
+  return apiFetch<BioimpedanciaRecord[]>({
+    path: `/v1/patients/${id}/bioimpedancia`,
+    revalidate: 0,
+  });
+}
+
+export function getPatientComposicao(id: string) {
+  return apiFetch<ComposicaoRecord[]>({
+    path: `/v1/patients/${id}/composicao`,
+    revalidate: 0,
+  });
+}
