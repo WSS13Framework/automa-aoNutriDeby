@@ -19,14 +19,9 @@ Rotas:
 from __future__ import annotations
 
 import base64
-import json
 import logging
-import ssl
 import uuid
-import urllib.error
-import urllib.request
-from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated
 
 import psycopg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -36,6 +31,9 @@ from nutrideby.api.deps import get_settings, require_api_key
 from nutrideby.api.mobile_api import check_active_access
 from nutrideby.config import Settings
 from nutrideby.ml.bio_model import get_model
+from nutrideby.services.body_composition import classifica_gordura, classifica_imc, serialize_row
+from nutrideby.services.spaces_storage import upload_photo_to_spaces
+from nutrideby.services.vision import call_gpt4o_vision
 
 logger = logging.getLogger(__name__)
 
@@ -44,101 +42,6 @@ router = APIRouter(tags=["composicao"])
 MAX_PHOTOS      = 5
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 ALLOWED_MIME    = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
-
-VISION_PROMPT = """Você é especialista em avaliação física e composição corporal.
-Analise as fotos do paciente e estime com base em silhueta, distribuição de gordura e definição muscular.
-
-Retorne SOMENTE JSON válido, sem texto extra:
-{
-  "body_fat_pct": <número 0-100, uma casa decimal>,
-  "muscle_mass_pct": <número 0-100, uma casa decimal>,
-  "notas": "<observações clínicas em português, 2-3 frases>"
-}
-
-Seja conservador. Se as fotos forem insuficientes, estime com o que for possível e indique nas notas.
-Responda sempre em português."""
-
-
-# ── Classificações ─────────────────────────────────────────────────────────────
-
-def _classifica_gordura(bf: float, sexo: str) -> str:
-    if sexo == "M":
-        if bf < 6:   return "atlético essencial"
-        if bf < 14:  return "atlético"
-        if bf < 18:  return "bom"
-        if bf < 25:  return "aceitável"
-        if bf < 32:  return "obesidade leve"
-        return "obesidade"
-    else:
-        if bf < 14:  return "atlético essencial"
-        if bf < 21:  return "atlético"
-        if bf < 25:  return "bom"
-        if bf < 32:  return "aceitável"
-        if bf < 39:  return "obesidade leve"
-        return "obesidade"
-
-
-def _classifica_imc(imc: float) -> str:
-    if imc < 18.5: return "abaixo do peso"
-    if imc < 25.0: return "peso normal"
-    if imc < 30.0: return "sobrepeso"
-    if imc < 35.0: return "obesidade grau I"
-    if imc < 40.0: return "obesidade grau II"
-    return "obesidade grau III"
-
-
-# ── Upload + Vision ────────────────────────────────────────────────────────────
-
-def _upload_photo(settings: Settings, data: bytes, mime: str, prefix: str, idx: int) -> str | None:
-    if not (settings.spaces_access_key_id and settings.spaces_secret_access_key):
-        return None
-    try:
-        import boto3
-        from botocore.config import Config
-    except ImportError:
-        return None
-    ext = mime.split("/")[-1].replace("jpeg", "jpg")
-    key = f"composicao/{prefix}/{idx}.{ext}"
-    client = boto3.client(
-        "s3",
-        region_name=settings.spaces_region,
-        endpoint_url=settings.spaces_endpoint.rstrip("/"),
-        aws_access_key_id=str(settings.spaces_access_key_id).strip(),
-        aws_secret_access_key=str(settings.spaces_secret_access_key).strip(),
-        config=Config(signature_version="s3v4"),
-    )
-    client.put_object(Bucket=settings.spaces_bucket, Key=key, Body=data,
-                      ContentType=mime, ACL="public-read")
-    return f"https://{settings.spaces_bucket}.{settings.spaces_region}.digitaloceanspaces.com/{key}"
-
-
-def _call_vision(settings: Settings, sources: list[dict]) -> dict[str, Any]:
-    api_key = (settings.openai_api_key or "").strip()
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY não configurada")
-    content: list[dict] = [{"type": "text", "text": VISION_PROMPT}]
-    for src in sources:
-        img_url = (f"data:{src['mime']};base64,{src['data']}"
-                   if src["type"] == "base64" else src["data"])
-        content.append({"type": "image_url", "image_url": {"url": img_url, "detail": "high"}})
-    body = json.dumps({
-        "model": "gpt-4o",
-        "messages": [{"role": "user", "content": content}],
-        "max_tokens": 400,
-        "response_format": {"type": "json_object"},
-    }).encode("utf-8")
-    url = f"{(settings.openai_api_base or 'https://api.openai.com').rstrip('/')}/v1/chat/completions"
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
-    ctx = ssl.create_default_context()
-    try:
-        with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        raise RuntimeError(f"Vision HTTP {e.code}: {raw[:300]}")
-    return json.loads(json.loads(raw)["choices"][0]["message"]["content"])
 
 
 # ── Fusão ML + Visão ───────────────────────────────────────────────────────────
@@ -180,8 +83,8 @@ def _salvar_bio(conn, patient_id, altura_cm, peso_kg, idade, sexo, ml) -> str:
          ml["massa_muscular_kg"], ml["massa_muscular_pct"],
          round(peso_kg * ml["gordura_pct"] / 100, 2),
          round(peso_kg * (1 - ml["gordura_pct"] / 100), 2),
-         _classifica_gordura(ml["gordura_pct"], sexo),
-         _classifica_imc(ml["imc"])),
+         classifica_gordura(ml["gordura_pct"], sexo),
+         classifica_imc(ml["imc"])),
     )
     return str(cur.fetchone()["id"])
 
@@ -241,7 +144,7 @@ async def criar_composicao(
             if len(data) > MAX_PHOTO_BYTES:
                 raise HTTPException(413, f"Foto {i+1} excede 10 MB")
             mime = ph.content_type or "image/jpeg"
-            url = _upload_photo(settings, data, mime, prefix, i)
+            url = upload_photo_to_spaces(settings, data, mime, f"composicao/{prefix}", i)
             if url:
                 photo_urls.append(url)
                 sources.append({"type": "url", "data": url})
@@ -249,7 +152,11 @@ async def criar_composicao(
                 sources.append({"type": "base64", "mime": mime,
                                  "data": base64.b64encode(data).decode()})
         try:
-            visao = _call_vision(settings, sources)
+            visao = call_gpt4o_vision(
+                sources,
+                (settings.openai_api_key or "").strip(),
+                settings.openai_api_base or "https://api.openai.com",
+            )
         except Exception as e:
             logger.warning("Visão falhou, usando só ML: %s", e)
 
@@ -284,8 +191,8 @@ async def criar_composicao(
              len(photos), photo_urls, fundido["fonte"],
              ml["imc"], gordura_f, smm_kg_f, musc_pct_f,
              massa_gorda, massa_magra,
-             _classifica_gordura(gordura_f, sexo),
-             _classifica_imc(ml["imc"]),
+             classifica_gordura(gordura_f, sexo),
+             classifica_imc(ml["imc"]),
              visao.get("notas") if visao else None,
              ml["gordura_pct"],
              float(visao["body_fat_pct"]) if visao else None,
@@ -295,8 +202,7 @@ async def criar_composicao(
              bio_id, scan_id_fk),
         ).fetchone()
 
-    result = _serialize(row)
-    # Adiciona intervalo de confiança do ML
+    result = serialize_row(row)
     result["gordura_intervalo"] = {
         "lo": ml.get("gordura_pct_lo"),
         "hi": ml.get("gordura_pct_hi"),
@@ -315,7 +221,7 @@ def listar_composicao(
             "SELECT * FROM composicao_corporal WHERE patient_id=%s ORDER BY created_at DESC LIMIT 50",
             (patient_id,)
         ).fetchall()
-    return [_serialize(r) for r in rows]
+    return [serialize_row(r) for r in rows]
 
 
 @router.get("/patients/{patient_id}/composicao/{cid}", summary="Detalhe de avaliação")
@@ -331,7 +237,7 @@ def detalhe_composicao(
         ).fetchone()
     if not row:
         raise HTTPException(404, "Avaliação não encontrada")
-    return _serialize(row)
+    return serialize_row(row)
 
 
 @router.post(
@@ -340,10 +246,7 @@ def detalhe_composicao(
     dependencies=[Depends(require_api_key)],
 )
 def retrain_model(settings: Annotated[Settings, Depends(get_settings)]):
-    """
-    Retreina o GradientBoosting com dados reais do banco (patients com DEXA confirmado).
-    Endpoint protegido por X-API-Key.
-    """
+    """Retreina o GBR com dados reais do banco. Protegido por X-API-Key."""
     from nutrideby.ml.bio_model import BioComposicaoModel, MODEL_PATH, _features
     import numpy as np
 
@@ -359,7 +262,7 @@ def retrain_model(settings: Annotated[Settings, Depends(get_settings)]):
     if len(rows) < 100:
         return {"status": "skip", "motivo": f"Apenas {len(rows)} registros reais — mínimo 100 para retreino"}
 
-    X = np.vstack([_features(r["altura_cm"], r["peso_kg"], r["idade"], r["sexo"]) for r in rows])
+    X     = np.vstack([_features(r["altura_cm"], r["peso_kg"], r["idade"], r["sexo"]) for r in rows])
     fat_y = np.array([float(r["gordura_pct"]) for r in rows])
     smm_y = np.array([float(r["massa_muscular_kg"]) for r in rows])
 
@@ -387,19 +290,3 @@ def retrain_model(settings: Annotated[Settings, Depends(get_settings)]):
     bm_module._model = m
 
     return {"status": "ok", "amostras": len(rows)}
-
-
-# ── Serialização ───────────────────────────────────────────────────────────────
-
-def _serialize(row: dict) -> dict:
-    out = {}
-    for k, v in row.items():
-        if isinstance(v, datetime):
-            out[k] = v.isoformat()
-        elif isinstance(v, uuid.UUID):
-            out[k] = str(v)
-        elif hasattr(v, "__float__") and not isinstance(v, (bool, int)):
-            out[k] = float(v)
-        else:
-            out[k] = v
-    return out
