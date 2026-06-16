@@ -9,6 +9,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR">
+      <head>
+        {/* Desabilita Google One Tap / FedCM do Chrome */}
+        <meta name="google" content="notranslate" />
+        <meta name="google-signin-client_id" content="" />
+      </head>
       <body>{children}</body>
     </html>
   );
