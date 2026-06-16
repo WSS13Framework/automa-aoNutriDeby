@@ -28,7 +28,9 @@ from typing import Annotated
 import jwt
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+import urllib.parse
+import urllib.request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
@@ -1264,6 +1266,101 @@ def get_metrics(
     }
 
 
+
+# -- Google OAuth ----------------------------------------------------------------
+
+_GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
+_GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+_GOOGLE_CALLBACK      = os.getenv("NUTRI_GOOGLE_CALLBACK", "https://api.nutrideby.com/api/nutri/auth/google/callback")
+
+
+@router.get("/auth/google")
+def google_login_redirect() -> RedirectResponse:
+    params = urllib.parse.urlencode({
+        "client_id":     _GOOGLE_CLIENT_ID,
+        "redirect_uri":  _GOOGLE_CALLBACK,
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "access_type":   "online",
+        "prompt":        "select_account",
+    })
+    return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
+
+@router.get("/auth/google/callback")
+def google_callback(
+    code: str | None = None,
+    error: str | None = None,
+    settings: Settings = Depends(get_settings),
+) -> RedirectResponse:
+    if error or not code:
+        return RedirectResponse("/painel?ge=acesso_negado")
+
+    try:
+        data = urllib.parse.urlencode({
+            "code":          code,
+            "client_id":     _GOOGLE_CLIENT_ID,
+            "client_secret": _GOOGLE_CLIENT_SECRET,
+            "redirect_uri":  _GOOGLE_CALLBACK,
+            "grant_type":    "authorization_code",
+        }).encode()
+        req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            tokens = json.loads(r.read())
+    except Exception as exc:
+        logger.error("Google token exchange error: %s", exc)
+        return RedirectResponse("/painel?ge=erro_token")
+
+    access_token = tokens.get("access_token")
+    if not access_token:
+        return RedirectResponse("/painel?ge=erro_token")
+
+    try:
+        req2 = urllib.request.Request(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        with urllib.request.urlopen(req2, timeout=10) as r:
+            info = json.loads(r.read())
+    except Exception as exc:
+        logger.error("Google userinfo error: %s", exc)
+        return RedirectResponse("/painel?ge=erro_userinfo")
+
+    email = (info or {}).get("email", "").lower().strip()
+    if not email:
+        return RedirectResponse("/painel?ge=sem_email")
+
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, crn, role FROM professional_nutricionistas "
+                "WHERE lower(email) = %s AND is_active = true",
+                (email,),
+            )
+            nutri = cur.fetchone()
+
+    if not nutri:
+        logger.warning("Google OAuth: email nao cadastrado: %s", email)
+        return RedirectResponse("/painel?ge=nao_autorizado")
+
+    jwt_token = _make_jwt(nutri["id"], nutri.get("role", "nutricionista"), str(settings.jwt_secret))
+    return RedirectResponse(f"/painel?gt={jwt_token}")
+
+
+@router.get("/me")
+def get_me(request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> dict:
+    payload = _auth(request, settings)
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, crn, role, email FROM professional_nutricionistas WHERE id = %s AND is_active = true",
+                (payload["sub"],),
+            )
+            nutri = cur.fetchone()
+    if not nutri:
+        raise HTTPException(status_code=404, detail="Nutricionista nao encontrada")
+    return {"id": nutri["id"], "name": nutri["name"], "crn": nutri.get("crn"), "role": nutri["role"], "email": nutri["email"]}
+
 _panel_router = APIRouter(tags=["nutricionista-painel"])
 
 
@@ -1326,6 +1423,11 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
 .login-card{background:#fff;border-radius:10px;padding:40px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.25)}
 .login-logo{font-family:var(--font-heading);font-size:22px;font-weight:700;color:var(--brand);margin-bottom:6px}
 .login-sub{font-size:13px;color:var(--muted);margin-bottom:28px}
+.btn-google{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px 16px;border:1.5px solid var(--border);border-radius:8px;background:#fff;color:#3c4043;font-family:var(--font-body);font-size:14px;font-weight:500;cursor:pointer;transition:box-shadow .15s,border-color .15s;margin-bottom:14px}
+.btn-google:hover{box-shadow:0 2px 8px rgba(0,0,0,.12);border-color:#bbb}
+.btn-google svg{flex-shrink:0}
+.login-divider{display:flex;align-items:center;gap:10px;margin-bottom:14px;color:var(--muted);font-size:12px}
+.login-divider:before,.login-divider:after{content:'';flex:1;height:1px;background:var(--border)}
 .field-label{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
 .field-input{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px;font-family:var(--font-body);outline:none;color:var(--text);transition:border-color .15s}
 .field-input:focus{border-color:var(--brand)}
@@ -1602,6 +1704,11 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-si
   <div id="fLogin" class="login-card">
     <div class="login-logo">NutriDeby</div>
     <div class="login-sub">Painel Clínico — Acesso exclusivo para profissionais</div>
+    <button class="btn-google" onclick="location.href='/api/nutri/auth/google'">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+      Entrar com Google
+    </button>
+    <div class="login-divider">ou</div>
     <div class="field-group"><label class="field-label" for="lEmail">E-mail profissional</label><input class="field-input" type="email" id="lEmail" placeholder="dra@clinica.com.br" autocomplete="email"/></div>
     <div class="field-group"><label class="field-label" for="lPass">Senha</label><input class="field-input" type="password" id="lPass" placeholder="••••••••" autocomplete="current-password"/></div>
     <button class="btn-login" id="btnLogin" onclick="doLogin()">Entrar</button>
@@ -1880,7 +1987,20 @@ try{_me=JSON.parse(localStorage.getItem('nm')||'null');}catch(e){}
 var _qp=new URLSearchParams(location.search);
 var _act=_qp.get('action'),_tkn=_qp.get('token');
 
-if(_act==='invite'&&_tkn) setPassMode('Bem-vinda! Crie sua senha para acessar o painel.','invite');
+// Google OAuth callback: ?gt=TOKEN ou ?ge=ERRO
+var _gt=_qp.get('gt'),_ge=_qp.get('ge');
+if(_gt){
+  _tok=_gt;localStorage.setItem('nt',_tok);
+  history.replaceState({},'','/painel');
+  authGet('/api/nutri/me').then(function(me){
+    _me=me;localStorage.setItem('nm',JSON.stringify(_me));showMain();
+  }).catch(function(){localStorage.removeItem('nt');showLogin();});
+} else if(_ge){
+  var _geMsgs={'acesso_negado':'Acesso negado pelo Google.','nao_autorizado':'E-mail nao autorizado. Solicite acesso a equipe NutriDeby.','erro_token':'Erro ao autenticar com Google. Tente novamente.','erro_userinfo':'Erro ao obter dados do Google. Tente novamente.','sem_email':'Nao foi possivel obter seu e-mail do Google.'};
+  setTimeout(function(){$('lErr').textContent=_geMsgs[_ge]||'Erro no login com Google.';},100);
+  history.replaceState({},'','/painel');
+  showLogin();
+} else if(_act==='invite'&&_tkn) setPassMode('Bem-vinda! Crie sua senha para acessar o painel.','invite');
 else if(_act==='reset'&&_tkn) setPassMode('Digite sua nova senha.','reset');
 else if(_tok&&_me) showMain();
 

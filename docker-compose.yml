@@ -120,7 +120,7 @@ services:
     ports:
       - "127.0.0.1:8085:8080"
     environment:
-      - AUTHENTICATION_API_KEY=nutrideby_evo_key
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://nutrideby:nutrideby_dev@postgres:5432/evolution
