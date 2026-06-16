@@ -47,3 +47,11 @@ Thumbs.db
 # --- IDEs (opcional; descomenta se a equipa não quiser partilhar) ---
 # .idea/
 # .vscode/
+
+# --- Backups temporários ---
+*.bak
+*.bak.*
+*.bak2
+*.backup
+*.old
+*.orig
